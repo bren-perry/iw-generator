@@ -781,14 +781,46 @@ export default function App() {
 
 
   function handleParsePolygon() {
-    const coords = parseCoordsFromUrl(polyUrl);
-    if (!coords.length) {
-      alert("Could not parse coordinates from the link. Please check the format.");
-      setPolyCoords(null);
-      return;
-    }
-    setPolyCoords(coords);
+  const coords = parseCoordsFromUrl(polyUrl);
+  if (!coords.length) {
+    alert("Could not parse coordinates from the link. Please check the format.");
+    setPolyCoords(null);
+    return;
   }
+  setPolyCoords(coords); // keep state for the “Fill towns…” button
+
+  const L = (window as any).L;
+  const mapEl = document.getElementById("iw-poly-map");
+  if (!L || !mapEl) {
+    alert("Map library is still loading. Please click Parse & show again in a moment.");
+    return;
+  }
+
+  // Ensure map exists (in case Leaflet finished loading after mount)
+  if (!mapRef.current) {
+    mapRef.current = L.map(mapEl).setView([coords[0][0], coords[0][1]], 7);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors",
+      maxZoom: 18,
+    }).addTo(mapRef.current);
+  }
+
+  // Remove previous polygon
+  if (layerRef.current) {
+    layerRef.current.remove();
+    layerRef.current = null;
+  }
+
+  // Draw new polygon and fit
+  layerRef.current = L.polygon(coords, {
+    color: "#2563eb",
+    weight: 3,
+    fillOpacity: 0.15,
+  }).addTo(mapRef.current);
+
+  mapRef.current.fitBounds(layerRef.current.getBounds(), { padding: [20, 20] });
+}
+
 
   function handleFillTownsFromPolygon() {
     if (!polyCoords || polyCoords.length < 3) {
