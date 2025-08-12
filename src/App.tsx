@@ -459,7 +459,7 @@ export default function App() {
   /* ---------------- State ---------------- */
   const [mode, setMode] = useState<Mode>("storm");
   const [province, setProvince] = useState<ProvinceCode>("ON");
-  const tz = PROVINCE_TZ[province] || "America/Toronto";
+  const tz = useMemo(() => PROVINCE_TZ[province] || "America/Toronto", [province]);
   const [addHashtags, setAddHashtags] = useState(false);
 
   // Storm details
@@ -553,7 +553,7 @@ export default function App() {
     const code = String(province).toUpperCase();
     return `#${code}Storm #${code}wx ${headlineBase}`;
   }, [addHashtags, headlineBase, province]);
-  const timestamp = useMemo(() => formatTimestamp(now, PROVINCE_TZ[province] || "America/Toronto"), [now, province]);
+  const timestamp = useMemo(() => formatTimestamp(now, tz), [now, tz]);
 
   /* ---------------- Description ---------------- */
   const description = useMemo(() => {
