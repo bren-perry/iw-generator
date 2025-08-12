@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vite + React + TS</title>
+    <!-- keep this page out of search -->
+    <meta name="robots" content="noindex, nofollow, noarchive" />
+    <meta name="googlebot" content="noindex, nofollow" />
+
+    <!-- Tailwind via CDN (simple, no config needed) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      /* Use light-form controls even in OS dark mode */
+      :root { color-scheme: light; }
+
+      /* Ensure the canvas fills and isn't dark at the edges */
+      html, body, #root { min-height: 100%; background: #f6f7f9; }
+      body { margin: 0; }
+    </style>
+
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
