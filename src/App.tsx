@@ -103,7 +103,6 @@ interface HazardOption {
 }
 interface HazardGroup { label: string; options: HazardOption[]; }
 interface HailMaxOption { value: string; name: string; sized: string; }
-interface Town { name: string; lat: number; lon: number; pop: number; prov: ProvinceCode; }
 
 /* ---------- Provinces / timezones ---------- */
 const PROVINCE_TZ: Record<ProvinceCode, string> = {
