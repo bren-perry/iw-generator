@@ -295,17 +295,22 @@ function buildHeadlineStorm(
   const items = HAZARD_PRIORITY
     .map((key) => {
       const opt = selection[key];
-      return !opt || opt.level === 0 ? null : { key, level: opt.level, value: opt.value };
+      return opt && opt.level > 0 ? { key, opt } : null;
     })
-    .filter((x): x is { key: HazardKey; level: number; value: string } => x !== null)
-    .sort((a, b) => b.level - a.level || HAZARD_PRIORITY.indexOf(a.key) - HAZARD_PRIORITY.indexOf(b.key));
+    .filter((x): x is { key: HazardKey; opt: HazardOption } => x !== null)
+    .sort(
+      (a, b) =>
+        b.opt.level - a.opt.level ||
+        HAZARD_PRIORITY.indexOf(a.key) - HAZARD_PRIORITY.indexOf(b.key)
+    );
 
   const phrases = items
-    .map(({ key, value }) => {
+    .map(({ key, opt }) => {
       const stat: HazardStatus =
-        key === "rotation" || key === "funnel" ? "detected" :
-        key === "tornado" ? "reported" : status[key];
-      return headlinePhrase(key, value, stat);
+        key === "rotation" || key === "funnel" ? "detected"
+        : key === "tornado" ? "reported"
+        : status[key];
+      return headlinePhrase(key, opt.value, stat);
     })
     .filter((p): p is string => Boolean(p));
 
@@ -315,6 +320,7 @@ function buildHeadlineStorm(
   const hazardText = needsAllCaps ? hazardTextRaw.toUpperCase() : nytTitleCase(hazardTextRaw);
   return `${category}: ${hazardText}`;
 }
+
 function buildHeadlineRegional(
   opts: { choice: "funnel" | "severe" | null; tornadoRisk: boolean },
   overallId: number,
