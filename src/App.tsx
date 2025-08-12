@@ -401,12 +401,22 @@ function buildHeadlineRegional(
 }
 
 /* ---------- Towns (starter lists) ---------- */
-const TOWNS: Town[] = [
-  // (… unchanged towns list …)
-  { name: "Toronto", lat: 43.65107, lon: -79.347015, pop: 2731571, prov: "ON" },
-  //  ⬆ keep the full list you already have
-  { name: "Iqaluit", lat: 63.7467, lon: -68.517, pop: 7740, prov: "NU" },
-];
+type TownRec = { name: string; lat: number; lon: number; pop: number; kind?: string };
+const [townsDb, setTownsDb] = useState<TownRec[] | null>(null);
+
+// load on mount (add cache-buster so GH Pages doesn’t serve an old copy)
+useEffect(() => {
+  (async () => {
+    try {
+      const res = await fetch(`./towns-on.json?ver=${Date.now()}`);
+      if (res.ok) {
+        const data: TownRec[] = await res.json();
+        setTownsDb(data);
+      }
+    } catch {}
+  })();
+}, []);
+
 
 /* ---------- Geometry helpers ---------- */
 function parseCoordsFromUrl(raw: string): LatLng[] {
@@ -849,18 +859,25 @@ export default function App() {
 }
 
   function handleFillTownsFromPolygon() {
-    if (!polyCoords || polyCoords.length < 3) {
-      alert("Parse a polygon first.");
-      return;
-    }
-    const candidates = TOWNS.filter((t) => t.prov === province && pointInPolygon([t.lat, t.lon], polyCoords));
-    if (candidates.length === 0) {
-      alert("No towns from the built-in list are inside this polygon. We can add more towns for this province if you like.");
-      return;
-    }
-    const top5 = candidates.sort((a, b) => b.pop - a.pop).slice(0, 5);
-    setTowns(top5.map((t) => t.name).join(", "));
+  if (!polyCoords || polyCoords.length < 3) {
+    alert("Parse a polygon first.");
+    return;
   }
+  if (!townsDb) {
+    alert("Towns database not loaded yet.");
+    return;
+  }
+
+  const inside = townsDb.filter((t) => pointInPolygon([t.lat, t.lon], polyCoords));
+  if (inside.length === 0) {
+    alert("No towns from the database are inside this polygon. If this seems wrong, try regenerating towns-on.json.");
+    return;
+  }
+
+  // top 5 by population
+  const top5 = inside.sort((a, b) => b.pop - a.pop).slice(0, 5);
+  setTowns(top5.map((t) => t.name).join(", "));
+}
 
   /* ---------- Handlers ---------- */
   function updateSelect(groupKey: HazardKey, value: string) {
