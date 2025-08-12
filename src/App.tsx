@@ -210,8 +210,12 @@ function resolveOverallLevel(values: Record<HazardKey, HazardOption>) {
 function orderedHazards(selection: Record<HazardKey, HazardOption>) {
   return HAZARD_PRIORITY
     .map((key) => ({ key, opt: selection[key] }))
-    .filter((e) => e.opt && e.opt.level > 0)
-    .sort((a, b) => b.opt.level - a.level || HAZARD_PRIORITY.indexOf(a.key) - HAZARD_PRIORITY.indexOf(b.key));
+    .filter((e) => e.opt.level > 0)
+    .sort(
+      (a, b) =>
+        b.opt.level - a.opt.level ||
+        HAZARD_PRIORITY.indexOf(a.key) - HAZARD_PRIORITY.indexOf(b.key)
+    );
 }
 function joinForHeadline(items: string[]) {
   if (items.length <= 1) return items[0] ?? "";
