@@ -479,7 +479,6 @@ export default function NotificationGenerator() {
 
     // Storm-based description
     const townsText = towns.split(/\n|,/).map((t) => t.trim()).filter(Boolean).join(", ");
-    const moving = direction ? `moving ${direction}` : "moving";
     const spd = speed ? ` at about ${speed} km/h` : "";
     const pathText = townsText ? ` Areas in the path include ${townsText}.` : "";
     const timeText = timeWindow ? ` Expected impacts over ${timeWindow}.` : "";
@@ -499,8 +498,6 @@ export default function NotificationGenerator() {
     const hailMaxSized = hailMaxEntry?.sized || "";
 
     const descFor = (key: HazardKey, value: string) => {
-      const reportedTag = (key === "rotation" || key === "funnel" || key === "tornado") ? "" : (status[key] === "reported" ? " reported" : " detected");
-      const note = key !== "rotation" && key !== "tornado" && status[key] === "reported" && reportNotes[key] ? ` (${reportNotes[key]})` : "";
       switch (key) {
         case "tornado":
           if (value === "reported") return `a tornado, reported${reportNotes.tornado ? ` (${reportNotes.tornado})` : ""}`;
