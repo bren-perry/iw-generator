@@ -1,6 +1,3 @@
-Here’s a **drop-in replacement** for your `src/App.tsx` with the polygon feature fixed and the build errors removed (no duplicate `primary`, and the `rep` variables are now used).
-
-```tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -1303,5 +1300,3 @@ export default function App() {
     </div>
   );
 }
-```
-
