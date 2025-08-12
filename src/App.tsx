@@ -436,6 +436,47 @@ function parsePolygonFromUrl(url: string): LatLng[] | null {
   }
 }
 
+// --- Robust parser for IW /custom/... polygon links ---
+// Accepts encoded or plain URLs like:
+// https://instantweather.ca/login/admin/custom/45.084%20-78.098%2C45.326%20-77.386%2C44.898%20-76.877%2C44.769%20-77.962%2C45.084%20-78.098
+// Returns Leaflet-ready [lat, lng][]; trims duplicate closing point.
+function parseCoordsFromUrl(raw: string): [number, number][] {
+  if (!raw) return [];
+  let s = raw.trim();
+
+  // decode 1–2 times in case it’s double-encoded
+  try { s = decodeURIComponent(s); } catch {}
+  try { s = decodeURIComponent(s); } catch {}
+
+  // Prefer the substring after "/custom/", otherwise use whole string
+  const after = s.split('/custom/').pop() || s;
+
+  // after should look like: "45.084 -78.098,45.326 -77.386,..."
+  const tokens = after.split(',').map(t => t.trim()).filter(Boolean);
+
+  const out: [number, number][] = [];
+  for (const tok of tokens) {
+    // grab the first "number number" pair
+    const m = tok.match(/-?\d+(?:\.\d+)?\s+-?\d+(?:\.\d+)?/);
+    const pair = (m ? m[0] : tok).trim().split(/\s+/);
+    if (pair.length !== 2) continue;
+    const lat = parseFloat(pair[0]);
+    const lon = parseFloat(pair[1]);
+    if (Number.isFinite(lat) && Number.isFinite(lon)) out.push([lat, lon]);
+  }
+
+  // remove trailing duplicate of the first vertex
+  if (out.length >= 2) {
+    const [aLat, aLon] = out[0];
+    const [bLat, bLon] = out[out.length - 1];
+    if (Math.abs(aLat - bLat) < 1e-6 && Math.abs(aLon - bLon) < 1e-6) {
+      out.pop();
+    }
+  }
+  return out;
+}
+
+
 // Ray-casting point-in-polygon (x=lon, y=lat)
 function pointInPolygon(pt: LatLng, poly: LatLng[]) {
   const x = pt[1], y = pt[0];
@@ -950,7 +991,32 @@ export default function NotificationGenerator() {
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
-                        onClick={handleParsePolygon}
+                        onClick={() => {
+                            const pts = parseCoordsFromUrl(polygonUrl); // polygonUrl = your textbox state
+                            if (!pts.length) {
+                              alert("Could not find coordinates in that link.");
+                              return;
+                            }
+                            if (!mapRef.current) return;
+                          
+                            // remove existing polygon if present
+                            if (polygonLayerRef.current) {
+                              polygonLayerRef.current.remove();
+                              polygonLayerRef.current = null;
+                            }
+                          
+                            // draw new polygon
+                            polygonLayerRef.current = L.polygon(pts, {
+                              color: '#0ea5e9',
+                              weight: 3,
+                              fillOpacity: 0.2,
+                            }).addTo(mapRef.current);
+                          
+                            // fit bounds
+                            const bounds = polygonLayerRef.current.getBounds();
+                            mapRef.current.fitBounds(bounds, { padding: [24, 24] });
+                          }}
+
                         className="inline-flex items-center gap-2 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm bg-white hover:bg-neutral-50"
                       >
                         <MapPinIcon className="w-4 h-4" />
