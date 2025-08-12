@@ -405,16 +405,23 @@ const [townsDb, setTownsDb] = useState<TownRec[] | null>(null);
 
 // load on mount (add cache-buster so GH Pages doesn’t serve an old copy)
 useEffect(() => {
+  let cancelled = false;
   (async () => {
     try {
-      const res = await fetch(`./towns-on.json?ver=${Date.now()}`);
-      if (res.ok) {
-        const data: TownRec[] = await res.json();
-        setTownsDb(data);
+      const res = await fetch("towns-on.json?ver=1"); // served from /iw-generator/ in prod
+      if (!res.ok) throw new Error(String(res.status));
+      const data = await res.json();
+      if (!cancelled) {
+        // setTownsDb(data) or whatever you called the state
       }
-    } catch {}
+    } catch (err) {
+      console.warn("Failed to load towns-on.json (non-fatal):", err);
+      // leave your features disabled or fall back to the small built-in list
+    }
   })();
+  return () => { cancelled = true; };
 }, []);
+
 
 
 /* ---------- Geometry helpers ---------- */
