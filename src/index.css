@@ -2,13 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
-/* --- minimal, safe defaults (let Tailwind do the styling) --- */
+/* minimal, Tailwind-first defaults */
 :root { color-scheme: light; }
 
 html, body, #root {
   height: 100%;
   min-height: 100%;
-  background: #f6f7f9; /* light neutral background */
+  background: #f6f7f9;
 }
 
 body {
@@ -18,7 +18,7 @@ body {
   color: #0a0a0a;
 }
 
-/* Ensure form controls inherit fonts and colors (so Tailwind classes apply cleanly) */
+/* Let Tailwind style controls; avoid hard-coded dark buttons */
 button, input, select, textarea {
   font: inherit;
   color: inherit;
@@ -26,7 +26,6 @@ button, input, select, textarea {
   border: none;
 }
 
-/* Media elements behave nicely by default */
 img, svg, video, canvas {
   display: block;
   max-width: 100%;
