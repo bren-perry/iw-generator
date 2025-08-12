@@ -21,12 +21,14 @@ import {
  *  - Paste polygon link → parse & show on Leaflet map
  *  - “Fill towns from polygon (top 5)” → auto-fills top 5 by population
  */
-// ---- Leaflet loader (multi-CDN + once-only) ----
+
+/* ---------------- Leaflet loader (multi-CDN + once-only) ---------------- */
 let leafletPromise: Promise<any> | null = null;
 
 function loadCss(href: string) {
   return new Promise<void>((resolve, reject) => {
-    if ([...document.styleSheets].some(s => (s as CSSStyleSheet).href === href)) return resolve();
+    // if already present, resolve
+    if ([...document.styleSheets].some((s) => (s as CSSStyleSheet).href === href)) return resolve();
     const link = document.createElement("link");
     link.rel = "stylesheet";
     link.href = href;
@@ -38,8 +40,7 @@ function loadCss(href: string) {
 }
 function loadScript(src: string) {
   return new Promise<void>((resolve, reject) => {
-    // If it was already appended and is complete, resolve
-    if ([...document.scripts].some(s => s.src === src)) return resolve();
+    if ([...document.scripts].some((s) => s.src === src)) return resolve();
     const s = document.createElement("script");
     s.src = src;
     s.defer = true;
@@ -49,7 +50,6 @@ function loadScript(src: string) {
     document.head.appendChild(s);
   });
 }
-
 export function ensureLeaflet(): Promise<any> {
   if ((window as any).L) return Promise.resolve((window as any).L);
   if (leafletPromise) return leafletPromise;
@@ -66,11 +66,10 @@ export function ensureLeaflet(): Promise<any> {
   ];
 
   leafletPromise = (async () => {
-    // Load any CSS that succeeds (don’t fail the whole chain on the first miss)
+    // try CSS (don’t fail overall if first one is slow)
     for (const href of CSS) {
       try { await loadCss(href); break; } catch {}
     }
-
     let lastErr: unknown = null;
     for (const src of JS) {
       try {
@@ -86,55 +85,30 @@ export function ensureLeaflet(): Promise<any> {
   return leafletPromise;
 }
 
-
+/* ---------------- Types & constants ---------------- */
 type HazardKey = "funnel" | "rotation" | "tornado" | "hail" | "wind" | "flooding";
 type Mode = "storm" | "regional";
 type HazardStatus = "detected" | "reported";
 type ProvinceCode =
   | "ON" | "QC" | "MB" | "SK" | "AB" | "BC" | "NB" | "NS" | "PE" | "NL" | "YT" | "NT" | "NU";
-
 type LatLng = [number, number];
 
-interface HazardOption {
-  value: string;
-  name: string;
-  level: number;
-  phrase: string;
-}
+interface HazardOption { value: string; name: string; level: number; phrase: string; }
 interface HazardGroup { label: string; options: HazardOption[]; }
 interface HailMaxOption { value: string; name: string; sized: string; }
+type TownRec = { name: string; lat: number; lon: number; pop: number; kind?: string };
 
-/* ---------- Provinces / timezones ---------- */
 const PROVINCE_TZ: Record<ProvinceCode, string> = {
-  ON: "America/Toronto",
-  QC: "America/Toronto",
-  MB: "America/Winnipeg",
-  SK: "America/Regina",
-  AB: "America/Edmonton",
-  BC: "America/Vancouver",
-  NB: "America/Halifax",
-  NS: "America/Halifax",
-  PE: "America/Halifax",
-  NL: "America/St_Johns",
-  YT: "America/Whitehorse",
-  NT: "America/Yellowknife",
-  NU: "America/Iqaluit",
+  ON: "America/Toronto", QC: "America/Toronto", MB: "America/Winnipeg",
+  SK: "America/Regina", AB: "America/Edmonton", BC: "America/Vancouver",
+  NB: "America/Halifax", NS: "America/Halifax", PE: "America/Halifax",
+  NL: "America/St_Johns", YT: "America/Whitehorse", NT: "America/Yellowknife", NU: "America/Iqaluit",
 };
-
 const PROVINCE_FULL: Record<ProvinceCode, string> = {
-  ON: "Ontario",
-  QC: "Quebec",
-  MB: "Manitoba",
-  SK: "Saskatchewan",
-  AB: "Alberta",
-  BC: "British Columbia",
-  NB: "New Brunswick",
-  NS: "Nova Scotia",
-  PE: "Prince Edward Island",
-  NL: "Newfoundland and Labrador",
-  YT: "Yukon",
-  NT: "Northwest Territories",
-  NU: "Nunavut",
+  ON: "Ontario", QC: "Quebec", MB: "Manitoba", SK: "Saskatchewan", AB: "Alberta",
+  BC: "British Columbia", NB: "New Brunswick", NS: "Nova Scotia",
+  PE: "Prince Edward Island", NL: "Newfoundland and Labrador",
+  YT: "Yukon", NT: "Northwest Territories", NU: "Nunavut",
 };
 
 function getStormReportGroupInfo(code: ProvinceCode): { name: string; url: string | null } {
@@ -150,17 +124,13 @@ function getStormReportGroupInfo(code: ProvinceCode): { name: string; url: strin
   return { name: `${full} Storm Reports`, url: null };
 }
 
-/* ---------- Severity levels ---------- */
 const LEVELS = [
-  { id: 1, key: "prepare", label: "Prepare", color: "#1e88e5" },
-  { id: 2, key: "act", label: "Act", color: "#fb8c00" },
-  { id: 3, key: "critical", label: "#e53935", color: "#e53935" }, // (label used below, keep id/color)
+  { id: 1, key: "prepare",   label: "Prepare",   color: "#1e88e5" },
+  { id: 2, key: "act",       label: "Act",       color: "#fb8c00" },
+  { id: 3, key: "critical",  label: "Critical",  color: "#e53935" },
   { id: 4, key: "emergency", label: "Emergency", color: "#d81b60" },
 ] as const;
-// fix: I fat-fingered the "critical" label earlier; set proper label again:
-(LEVELS as any)[2].label = "Critical";
 
-/* ---------- Hail max options ---------- */
 const HAIL_MAX_OPTS: HailMaxOption[] = [
   { value: "", name: "No max hail size selected (optional)", sized: "" },
   { value: "0.5cm_pea", name: "Pea (~0.5 cm)", sized: "pea-sized (~0.5 cm)" },
@@ -178,7 +148,6 @@ const HAIL_MAX_OPTS: HailMaxOption[] = [
   { value: "9.7cm_softball", name: "Softball (~9.7 cm)", sized: "softball-sized (~9.7 cm)" },
 ];
 
-/* ---------- Hazards ---------- */
 const HAZARDS: Record<HazardKey, HazardGroup> = {
   funnel: {
     label: "Funnel cloud",
@@ -241,7 +210,7 @@ const HAZARDS: Record<HazardKey, HazardGroup> = {
 const DIRECTIONS = ["north","northeast","east","southeast","south","southwest","west","northwest"] as const;
 const HAZARD_PRIORITY: HazardKey[] = ["tornado", "rotation", "hail", "wind", "flooding", "funnel"];
 
-/* ---------- Helpers ---------- */
+/* ---------------- Helpers ---------------- */
 const capWord = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 function toTitleCase(s: string) { return s.replace(/\b\w/g, (m) => m.toUpperCase()); }
 function nytTitleCase(str: string) {
@@ -287,7 +256,7 @@ function joinForHeadline(items: string[]) {
   return `${head} & ${tail}`;
 }
 
-/* ---------- Policy override (storm mode) ---------- */
+/* ---------------- Policy override (storm mode) ---------------- */
 function computeFinalLevel(
   baseId: number,
   selection: Record<HazardKey, HazardOption>,
@@ -312,7 +281,7 @@ function computeFinalLevel(
   return finalId;
 }
 
-/* ---------- Headline helpers ---------- */
+/* ---------------- Headline helpers ---------------- */
 function headlinePhrase(key: HazardKey, value: string, status: HazardStatus) {
   const tag = status === "reported" ? "Reported" : "Detected";
   switch (key) {
@@ -382,7 +351,6 @@ function buildHeadlineStorm(
   const hazardText = needsAllCaps ? hazardTextRaw.toUpperCase() : nytTitleCase(hazardTextRaw);
   return `${category}: ${hazardText}`;
 }
-
 function buildHeadlineRegional(
   opts: { choice: "funnel" | "severe" | null; tornadoRisk: boolean },
   overallId: number,
@@ -399,39 +367,14 @@ function buildHeadlineRegional(
   return `${category}: ${text}`;
 }
 
-/* ---------- Towns (starter lists) ---------- */
-type TownRec = { name: string; lat: number; lon: number; pop: number; kind?: string };
-const [townsDb, setTownsDb] = useState<TownRec[] | null>(null);
-
-// load on mount (add cache-buster so GH Pages doesn’t serve an old copy)
-useEffect(() => {
-  let cancelled = false;
-  (async () => {
-    try {
-      const res = await fetch("towns-on.json?ver=1"); // served from /iw-generator/ in prod
-      if (!res.ok) throw new Error(String(res.status));
-      const data = await res.json();
-      if (!cancelled) {
-        // setTownsDb(data) or whatever you called the state
-      }
-    } catch (err) {
-      console.warn("Failed to load towns-on.json (non-fatal):", err);
-      // leave your features disabled or fall back to the small built-in list
-    }
-  })();
-  return () => { cancelled = true; };
-}, []);
-
-
-
-/* ---------- Geometry helpers ---------- */
+/* ---------------- Geometry helpers ---------------- */
 function parseCoordsFromUrl(raw: string): LatLng[] {
   if (!raw) return [];
   let s = raw.trim();
   try { s = decodeURIComponent(s); } catch {}
   try { s = decodeURIComponent(s); } catch {}
   const after = s.split("/custom/").pop() || s;
-  const tokens = after.split(",").map(t => t.trim()).filter(Boolean);
+  const tokens = after.split(",").map((t) => t.trim()).filter(Boolean);
   const out: LatLng[] = [];
   for (const tok of tokens) {
     const m = tok.match(/-?\d+(?:\.\d+)?\s+-?\d+(?:\.\d+)?/);
@@ -448,6 +391,7 @@ function parseCoordsFromUrl(raw: string): LatLng[] {
   }
   return out;
 }
+// Ray-casting point-in-polygon (x=lon, y=lat)
 function pointInPolygon(pt: LatLng, poly: LatLng[]) {
   const x = pt[1], y = pt[0];
   let inside = false;
@@ -462,7 +406,7 @@ function pointInPolygon(pt: LatLng, poly: LatLng[]) {
 
 /* ======================= Component ======================= */
 export default function App() {
-  // meta + style shim (scoped so Leaflet doesn't wash out form fields)
+  /* Meta + scoped styling to preserve original look */
   useEffect(() => {
     const ensureMeta = (name: string, content: string) => {
       let el = document.querySelector(`meta[name="${name}"]`) as HTMLMetaElement | null;
@@ -480,8 +424,6 @@ export default function App() {
         :root { color-scheme: light; }
         html, body, #root { min-height: 100%; background: #f6f7f9; }
         body { margin: 0; }
-
-        /* keep Leaflet rounded without touching inputs */
         .leaflet-container { border-radius: 12px; }
 
         /* ===== Scoped UI reset (back to original look) ===== */
@@ -495,13 +437,12 @@ export default function App() {
           background:#fff !important;
           color:var(--iw-text);
           border:1px solid var(--iw-border-strong) !important;
-          border-radius: 0.75rem; /* rounded-xl */
-          padding: 0.5rem 0.75rem; /* px-3 py-2 */
+          border-radius: 0.75rem;
+          padding: 0.5rem 0.75rem;
           line-height: 1.5;
         }
         .iw-root input::placeholder,
         .iw-root textarea::placeholder { color:#9ca3af; }
-
         .iw-root input:focus,
         .iw-root textarea:focus,
         .iw-root select:focus {
@@ -509,17 +450,13 @@ export default function App() {
           border-color:#60a5fa !important;
           box-shadow: 0 0 0 2px var(--iw-ring);
         }
-
-        /* Buttons keep clear borders even in dark OS themes */
-        .iw-root button {
-          background:#fff;
-          border-color: var(--iw-border-strong);
-        }
+        .iw-root button { background:#fff; border-color: var(--iw-border-strong); }
       `;
       document.head.appendChild(style);
     }
   }, []);
 
+  /* ---------------- State ---------------- */
   const [mode, setMode] = useState<Mode>("storm");
   const [province, setProvince] = useState<ProvinceCode>("ON");
   const tz = PROVINCE_TZ[province] || "America/Toronto";
@@ -571,6 +508,24 @@ export default function App() {
   // Major population in path
   const [majorPopPath, setMajorPopPath] = useState(false);
 
+  // Towns DB (✅ moved INSIDE the component)
+  const [townsDb, setTownsDb] = useState<TownRec[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("towns-on.json?ver=1"); // served from /iw-generator/ on GH Pages
+        if (!res.ok) throw new Error(String(res.status));
+        const data = (await res.json()) as TownRec[];
+        if (!cancelled) setTownsDb(data);
+      } catch (err) {
+        console.warn("Failed to load towns-on.json (non-fatal):", err);
+        if (!cancelled) setTownsDb([]); // keep features usable
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   // Overall level
   const baseOverall = useMemo(
     () => (mode === "storm" ? resolveOverallLevel(selection) : { id: 1, meta: LEVELS[0] }),
@@ -593,16 +548,14 @@ export default function App() {
           ),
     [mode, selection, status, finalLevelId, finalLevelMeta.label, regionalChoice, regionalTornadoRisk]
   );
-
   const headline = useMemo(() => {
     if (!addHashtags) return headlineBase;
     const code = String(province).toUpperCase();
     return `#${code}Storm #${code}wx ${headlineBase}`;
   }, [addHashtags, headlineBase, province]);
+  const timestamp = useMemo(() => formatTimestamp(now, PROVINCE_TZ[province] || "America/Toronto"), [now, province]);
 
-  const timestamp = useMemo(() => formatTimestamp(now, tz), [now, tz]);
-
-  /* ---------- Description ---------- */
+  /* ---------------- Description ---------------- */
   const description = useMemo(() => {
     const groupInfo = getStormReportGroupInfo(province);
     const reportLine =
@@ -792,100 +745,76 @@ export default function App() {
     location, towns, direction, speed, finalLevelId, finalLevelMeta.label, province
   ]);
 
-  /* ---------- Polygon tools state ---------- */
+  /* ---------------- Polygon tools state + map init ---------------- */
   const [polyUrl, setPolyUrl] = useState("");
   const [polyCoords, setPolyCoords] = useState<LatLng[] | null>(null);
   const mapRef = useRef<any>(null);
   const layerRef = useRef<any>(null);
 
   useEffect(() => {
-  let cancelled = false;
+    let cancelled = false;
+    (async () => {
+      try {
+        const L = await ensureLeaflet();
+        if (cancelled) return;
+        const mapEl = document.getElementById("iw-poly-map");
+        if (!mapEl || mapRef.current) return;
+        mapRef.current = L.map(mapEl).setView([45, -79], 5);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution: "&copy; OpenStreetMap contributors",
+          maxZoom: 18,
+        }).addTo(mapRef.current);
+      } catch (err) {
+        console.error(err);
+        alert("Map library failed to load. Please check your connection and try again.");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
-  (async () => {
-    try {
-      const L = await ensureLeaflet();
-      if (cancelled) return;
-      const mapEl = document.getElementById("iw-poly-map");
-      if (!mapEl || mapRef.current) return;
+  async function handleParsePolygon() {
+    const coords = parseCoordsFromUrl(polyUrl);
+    if (!coords.length) {
+      alert("Could not parse coordinates from the link. Please check the format.");
+      setPolyCoords(null);
+      return;
+    }
+    setPolyCoords(coords);
 
-      mapRef.current = L.map(mapEl).setView([45, -79], 5);
+    let L: any;
+    try { L = await ensureLeaflet(); }
+    catch (err) { console.error(err); alert("Map library failed to load. Please check your connection and try again."); return; }
+
+    const mapEl = document.getElementById("iw-poly-map");
+    if (!mapEl) return;
+
+    if (!mapRef.current) {
+      mapRef.current = L.map(mapEl).setView([coords[0][0], coords[0][1]], 7);
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: "&copy; OpenStreetMap contributors",
         maxZoom: 18,
       }).addTo(mapRef.current);
-    } catch (err) {
-      console.error(err);
-      alert("Map library failed to load. Please check your connection and try again.");
     }
-  })();
+    if (layerRef.current) { layerRef.current.remove(); layerRef.current = null; }
 
-  return () => { cancelled = true; };
-}, []);
-
-  async function handleParsePolygon() {
-  const coords = parseCoordsFromUrl(polyUrl);
-  if (!coords.length) {
-    alert("Could not parse coordinates from the link. Please check the format.");
-    setPolyCoords(null);
-    return;
+    layerRef.current = L.polygon(coords, { color: "#2563eb", weight: 3, fillOpacity: 0.15 }).addTo(mapRef.current);
+    mapRef.current.fitBounds(layerRef.current.getBounds(), { padding: [20, 20] });
   }
-  setPolyCoords(coords);
-
-  let L: any;
-  try {
-    L = await ensureLeaflet();
-  } catch (err) {
-    console.error(err);
-    alert("Map library failed to load. Please check your connection and try again.");
-    return;
-  }
-  const mapEl = document.getElementById("iw-poly-map");
-  if (!mapEl) return;
-
-  if (!mapRef.current) {
-    mapRef.current = L.map(mapEl).setView([coords[0][0], coords[0][1]], 7);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "&copy; OpenStreetMap contributors",
-      maxZoom: 18,
-    }).addTo(mapRef.current);
-  }
-
-  if (layerRef.current) {
-    layerRef.current.remove();
-    layerRef.current = null;
-  }
-
-  layerRef.current = L.polygon(coords, {
-    color: "#2563eb",
-    weight: 3,
-    fillOpacity: 0.15,
-  }).addTo(mapRef.current);
-
-  mapRef.current.fitBounds(layerRef.current.getBounds(), { padding: [20, 20] });
-}
 
   function handleFillTownsFromPolygon() {
-  if (!polyCoords || polyCoords.length < 3) {
-    alert("Parse a polygon first.");
-    return;
-  }
-  if (!townsDb) {
-    alert("Towns database not loaded yet.");
-    return;
-  }
+    if (!polyCoords || polyCoords.length < 3) { alert("Parse a polygon first."); return; }
+    if (!townsDb)         { alert("Towns database not loaded yet."); return; }
 
-  const inside = townsDb.filter((t) => pointInPolygon([t.lat, t.lon], polyCoords));
-  if (inside.length === 0) {
-    alert("No towns from the database are inside this polygon. If this seems wrong, try regenerating towns-on.json.");
-    return;
+    const inside = townsDb.filter((t) => pointInPolygon([t.lat, t.lon], polyCoords));
+    if (inside.length === 0) {
+      alert("No towns from the database are inside this polygon. If this seems wrong, try regenerating towns-on.json.");
+      return;
+    }
+    const top5 = inside.sort((a, b) => b.pop - a.pop).slice(0, 5);
+    setTowns(top5.map((t) => t.name).join(", "));
   }
 
-  // top 5 by population
-  const top5 = inside.sort((a, b) => b.pop - a.pop).slice(0, 5);
-  setTowns(top5.map((t) => t.name).join(", "));
-}
-
-  /* ---------- Handlers ---------- */
+  /* ---------------- Handlers & UI helpers ---------------- */
   function updateSelect(groupKey: HazardKey, value: string) {
     const group = HAZARDS[groupKey];
     const opt = group.options.find((o) => o.value === value) ?? group.options[0];
@@ -896,7 +825,7 @@ export default function App() {
   function copyToClipboard(text: string) { if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).catch(()=>{}); }
   const levelColorStyle = { background: finalLevelMeta.color, color: "#fff" } as React.CSSProperties;
 
-  /* ========================= UI ========================= */
+  /* ---------------- UI ---------------- */
   return (
     <div className="iw-root min-h-screen w-full bg-neutral-50 text-neutral-900">
       <div className="max-w-screen-2xl mx-auto p-4 sm:p-6 lg:p-8">
@@ -937,11 +866,7 @@ export default function App() {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="sm:col-span-1">
                   <label className="block text-sm font-medium mb-1">Province / time zone</label>
-                  <select
-                    value={province}
-                    onChange={(e) => setProvince(e.target.value as ProvinceCode)}
-                    className="w-full bg-white"
-                  >
+                  <select value={province} onChange={(e) => setProvince(e.target.value as ProvinceCode)} className="w-full bg-white">
                     {(Object.keys(PROVINCE_TZ) as ProvinceCode[]).map((p) => (<option key={p} value={p}>{p}</option>))}
                   </select>
                 </div>
@@ -949,22 +874,12 @@ export default function App() {
                 {mode === "storm" ? (
                   <div className="sm:col-span-2">
                     <label className="block text-sm font-medium mb-1">Current location</label>
-                    <input
-                      value={location}
-                      onChange={(e) => setLocation(e.target.value)}
-                      placeholder="e.g., Listowel"
-                      className="w-full"
-                    />
+                    <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g., Listowel" className="w-full" />
                   </div>
                 ) : (
                   <div className="sm:col-span-2">
                     <label className="block text-sm font-medium mb-1">Regions impacted</label>
-                    <input
-                      value={regions}
-                      onChange={(e) => setRegions(e.target.value)}
-                      placeholder="e.g., Grey-Bruce, Huron-Perth, Waterloo Region"
-                      className="w-full"
-                    />
+                    <input value={regions} onChange={(e) => setRegions(e.target.value)} placeholder="e.g., Grey-Bruce, Huron-Perth, Waterloo Region" className="w-full" />
                   </div>
                 )}
               </div>
@@ -973,55 +888,30 @@ export default function App() {
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
                     <label className="block text-sm font-medium mb-1 flex items-center gap-1"><Compass className="w-4 h-4"/>Direction of motion</label>
-                    <select
-                      value={direction}
-                      onChange={(e) => setDirection(e.target.value as any)}
-                      className="w-full bg-white"
-                    >
+                    <select value={direction} onChange={(e) => setDirection(e.target.value as any)} className="w-full bg-white">
                       {DIRECTIONS.map((d) => (<option key={d} value={d}>{toTitleCase(d)}</option>))}
                     </select>
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">Speed (km/h, optional)</label>
-                    <input
-                      type="number" inputMode="numeric" min={0} value={speed}
-                      onChange={(e) => setSpeed(e.target.value)}
-                      placeholder="e.g., 60"
-                      className="w-full"
-                    />
+                    <input type="number" inputMode="numeric" min={0} value={speed} onChange={(e) => setSpeed(e.target.value)} placeholder="e.g., 60" className="w-full" />
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">Time window</label>
-                    <input
-                      value={timeWindow}
-                      onChange={(e) => setTimeWindow(e.target.value)}
-                      placeholder="e.g., the next 30 to 60 minutes"
-                      className="w-full"
-                    />
+                    <input value={timeWindow} onChange={(e) => setTimeWindow(e.target.value)} placeholder="e.g., the next 30 to 60 minutes" className="w-full" />
                   </div>
                 </div>
               ) : (
                 <div>
                   <label className="block text-sm font-medium mb-1">Timeframe</label>
-                  <input
-                    value={timeWindow}
-                    onChange={(e) => setTimeWindow(e.target.value)}
-                    placeholder="e.g., this afternoon and evening"
-                    className="w-full"
-                  />
+                  <input value={timeWindow} onChange={(e) => setTimeWindow(e.target.value)} placeholder="e.g., this afternoon and evening" className="w-full" />
                 </div>
               )}
 
               {mode === "storm" ? (
                 <div>
                   <label className="block text-sm font-medium mb-1">Towns in the path</label>
-                  <textarea
-                    value={towns}
-                    onChange={(e) => setTowns(e.target.value)}
-                    rows={3}
-                    placeholder="Enter towns or landmarks, separated by commas or new lines"
-                    className="w-full"
-                  />
+                  <textarea value={towns} onChange={(e) => setTowns(e.target.value)} rows={3} placeholder="Enter towns or landmarks, separated by commas or new lines" className="w-full" />
                 </div>
               ) : null}
 
@@ -1040,11 +930,7 @@ export default function App() {
                       className="w-full"
                     />
                     <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={handleParsePolygon}
-                        className="inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm"
-                      >
+                      <button type="button" onClick={handleParsePolygon} className="inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm">
                         <MapPinIcon className="w-4 h-4" />
                         Parse & show
                       </button>
@@ -1098,11 +984,7 @@ export default function App() {
                         <div className="mt-2 space-y-2">
                           <div>
                             <label className="block text-xs uppercase tracking-wide text-neutral-600 mb-1">Max hail size (optional)</label>
-                            <select
-                              value={hailMax}
-                              onChange={(e) => setHailMax(e.target.value)}
-                              className="w-full bg-white"
-                            >
+                            <select value={hailMax} onChange={(e) => setHailMax(e.target.value)} className="w-full bg-white">
                               {HAIL_MAX_OPTS.map((o) => (<option key={o.value} value={o.value}>{o.name}</option>))}
                             </select>
                           </div>
@@ -1127,11 +1009,7 @@ export default function App() {
                               </div>
                             </>
                           )}
-                          <input
-                            value={funnelReporter}
-                            onChange={(e) => setFunnelReporter(e.target.value)}
-                            placeholder="Reported by (e.g., trained spotter, OPP, photo/video)"
-                          />
+                          <input value={funnelReporter} onChange={(e) => setFunnelReporter(e.target.value)} placeholder="Reported by (e.g., trained spotter, OPP, photo/video)" />
                         </div>
                       )}
 
@@ -1148,11 +1026,7 @@ export default function App() {
                       {/* Tornado: checkbox + reporter note */}
                       {key === "tornado" && (selection.tornado.value === "reported" || selection.tornado.value === "damaging_reported") && (
                         <div className="mt-2 grid grid-cols-1 gap-2">
-                          <input
-                            value={reportNotes.tornado || ""}
-                            onChange={(e) => updateReportNote("tornado", e.target.value)}
-                            placeholder="Reported by (e.g., trained spotter, OPP, photo/video)"
-                          />
+                          <input value={reportNotes.tornado || ""} onChange={(e) => updateReportNote("tornado", e.target.value)} placeholder="Reported by (e.g., trained spotter, OPP, photo/video)" />
                           <label className="inline-flex items-center gap-2 text-sm">
                             <input type="checkbox" checked={majorPopPath} onChange={(e) => setMajorPopPath(e.target.checked)} />
                             <span>Major population in path</span>
@@ -1172,27 +1046,15 @@ export default function App() {
                           </div>
 
                           {status[key as HazardKey] === "reported" && (
-                            <input
-                              value={reportNotes[key as HazardKey] || ""}
-                              onChange={(e) => updateReportNote(key as HazardKey, e.target.value)}
-                              placeholder="How was it reported? (e.g., photo/video, spotter)"
-                            />
+                            <input value={reportNotes[key as HazardKey] || ""} onChange={(e) => updateReportNote(key as HazardKey, e.target.value)} placeholder="How was it reported? (e.g., photo/video, spotter)" />
                           )}
 
                           {key === "wind" && selection.wind.value !== "none" && (
-                            <input
-                              type="number" inputMode="numeric" min={0} value={windMax}
-                              onChange={(e) => setWindMax(e.target.value)}
-                              placeholder="Max wind (km/h, optional)"
-                            />
+                            <input type="number" inputMode="numeric" min={0} value={windMax} onChange={(e) => setWindMax(e.target.value)} placeholder="Max wind (km/h, optional)" />
                           )}
 
                           {key === "flooding" && selection.flooding.value !== "none" && (
-                            <input
-                              type="number" inputMode="numeric" min={0} value={rainMax}
-                              onChange={(e) => setRainMax(e.target.value)}
-                              placeholder="Max rainfall (mm, optional)"
-                            />
+                            <input type="number" inputMode="numeric" min={0} value={rainMax} onChange={(e) => setRainMax(e.target.value)} placeholder="Max rainfall (mm, optional)" />
                           )}
                         </div>
                       )}
@@ -1243,11 +1105,7 @@ export default function App() {
                         {regionalTornadoRisk && (
                           <div>
                             <label className="block text-xs uppercase tracking-wide text-neutral-600 mb-1">Tornado risk level</label>
-                            <select
-                              value={regionalTornadoRiskLevel}
-                              onChange={(e)=>setRegionalTornadoRiskLevel(e.target.value as "low"|"moderate"|"high")}
-                              className="w-full bg-white"
-                            >
+                            <select value={regionalTornadoRiskLevel} onChange={(e)=>setRegionalTornadoRiskLevel(e.target.value as "low"|"moderate"|"high")} className="w-full bg-white">
                               <option value="low">Low</option>
                               <option value="moderate">Moderate</option>
                               <option value="high">High</option>
@@ -1328,19 +1186,6 @@ export default function App() {
                           {key === "funnel" && <CloudLightning className="w-3.5 h-3.5"/>}
                           <span className="capitalize">{key}</span>
                           <span className="text-neutral-500">{(opt as HazardOption).name}</span>
-                          {key === "hail" && hailMax && <span className="text-neutral-500">· max {HAIL_MAX_OPTS.find(h=>h.value===hailMax)?.name.toLowerCase()}</span>}
-                          {key === "hail" && (selection.hail.value === "large" || selection.hail.value === "very_large") && hailMajorPop && <span className="text-neutral-500">· major population</span>}
-                          {key === "wind" && windMax && <span className="text-neutral-500">· max {windMax} km/h</span>}
-                          {key === "flooding" && rainMax && <span className="text-neutral-500">· max {rainMax} mm</span>}
-                          {key === "tornado" && (selection.tornado.value === "reported" || selection.tornado.value === "damaging_reported") && <span className="text-neutral-500">· reported</span>}
-                          {key === "tornado" && (selection.tornado.value === "reported" || selection.tornado.value === "damaging_reported") && majorPopPath && <span className="text-neutral-500">· major population</span>}
-                          {key === "rotation" && ["strong","intense"].includes(selection.rotation.value) && majorPopPath && <span className="text-neutral-500">· major population</span>}
-                          {key === "funnel" && (selection.funnel.value === "reported" || selection.funnel.value === "landspout_reported") && (
-                            <>
-                              {selection.funnel.value === "reported" && <span className="text-neutral-500">· {funnelSubtype === "supercell" ? "supercell" : "non-supercell"}</span>}
-                              {funnelReporter && <span className="text-neutral-500">· {funnelReporter}</span>}
-                            </>
-                          )}
                         </span>
                       ) : null
                     ))
