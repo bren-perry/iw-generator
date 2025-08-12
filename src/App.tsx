@@ -21,6 +21,71 @@ import {
  *  - Paste polygon link → parse & show on Leaflet map
  *  - “Fill towns from polygon (top 5)” → auto-fills top 5 by population
  */
+// ---- Leaflet loader (multi-CDN + once-only) ----
+let leafletPromise: Promise<any> | null = null;
+
+function loadCss(href: string) {
+  return new Promise<void>((resolve, reject) => {
+    if ([...document.styleSheets].some(s => (s as CSSStyleSheet).href === href)) return resolve();
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = href;
+    link.crossOrigin = "anonymous";
+    link.onload = () => resolve();
+    link.onerror = () => reject(new Error("CSS failed: " + href));
+    document.head.appendChild(link);
+  });
+}
+function loadScript(src: string) {
+  return new Promise<void>((resolve, reject) => {
+    // If it was already appended and is complete, resolve
+    if ([...document.scripts].some(s => s.src === src)) return resolve();
+    const s = document.createElement("script");
+    s.src = src;
+    s.defer = true;
+    s.crossOrigin = "anonymous";
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error("JS failed: " + src));
+    document.head.appendChild(s);
+  });
+}
+
+export function ensureLeaflet(): Promise<any> {
+  if ((window as any).L) return Promise.resolve((window as any).L);
+  if (leafletPromise) return leafletPromise;
+
+  const CSS = [
+    "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css",
+    "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css",
+    "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css",
+  ];
+  const JS = [
+    "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js",
+    "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js",
+  ];
+
+  leafletPromise = (async () => {
+    // Load any CSS that succeeds (don’t fail the whole chain on the first miss)
+    for (const href of CSS) {
+      try { await loadCss(href); break; } catch {}
+    }
+
+    let lastErr: unknown = null;
+    for (const src of JS) {
+      try {
+        await loadScript(src);
+        if ((window as any).L) return (window as any).L;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw lastErr ?? new Error("Leaflet failed to load from all CDNs");
+  })();
+
+  return leafletPromise;
+}
+
 
 type HazardKey = "funnel" | "rotation" | "tornado" | "hail" | "wind" | "flooding";
 type Mode = "storm" | "regional";
@@ -717,56 +782,71 @@ export default function App() {
   const mapRef = useRef<any>(null);
   const layerRef = useRef<any>(null);
 
-  // Init Leaflet map once
   useEffect(() => {
-    const L = (window as any).L;
-    const mapEl = document.getElementById("iw-poly-map");
-    if (!L || !mapEl || mapRef.current) return;
+  let cancelled = false;
 
-    mapRef.current = L.map(mapEl).setView([45, -79], 5);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "&copy; OpenStreetMap contributors",
-      maxZoom: 18,
-    }).addTo(mapRef.current);
-  }, []);
+  (async () => {
+    try {
+      const L = await ensureLeaflet();
+      if (cancelled) return;
+      const mapEl = document.getElementById("iw-poly-map");
+      if (!mapEl || mapRef.current) return;
 
-  function handleParsePolygon() {
-    const coords = parseCoordsFromUrl(polyUrl);
-    if (!coords.length) {
-      alert("Could not parse coordinates from the link. Please check the format.");
-      setPolyCoords(null);
-      return;
-    }
-    setPolyCoords(coords);
-
-    const L = (window as any).L;
-    const mapEl = document.getElementById("iw-poly-map");
-    if (!L || !mapEl) {
-      alert("Map library is still loading. Please click Parse & show again in a moment.");
-      return;
-    }
-
-    if (!mapRef.current) {
-      mapRef.current = L.map(mapEl).setView([coords[0][0], coords[0][1]], 7);
+      mapRef.current = L.map(mapEl).setView([45, -79], 5);
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: "&copy; OpenStreetMap contributors",
         maxZoom: 18,
       }).addTo(mapRef.current);
+    } catch (err) {
+      console.error(err);
+      alert("Map library failed to load. Please check your connection and try again.");
     }
+  })();
 
-    if (layerRef.current) {
-      layerRef.current.remove();
-      layerRef.current = null;
-    }
+  return () => { cancelled = true; };
+}, []);
 
-    layerRef.current = L.polygon(coords, {
-      color: "#2563eb",
-      weight: 3,
-      fillOpacity: 0.15,
-    }).addTo(mapRef.current);
-
-    mapRef.current.fitBounds(layerRef.current.getBounds(), { padding: [20, 20] });
+  async function handleParsePolygon() {
+  const coords = parseCoordsFromUrl(polyUrl);
+  if (!coords.length) {
+    alert("Could not parse coordinates from the link. Please check the format.");
+    setPolyCoords(null);
+    return;
   }
+  setPolyCoords(coords);
+
+  let L: any;
+  try {
+    L = await ensureLeaflet();
+  } catch (err) {
+    console.error(err);
+    alert("Map library failed to load. Please check your connection and try again.");
+    return;
+  }
+  const mapEl = document.getElementById("iw-poly-map");
+  if (!mapEl) return;
+
+  if (!mapRef.current) {
+    mapRef.current = L.map(mapEl).setView([coords[0][0], coords[0][1]], 7);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors",
+      maxZoom: 18,
+    }).addTo(mapRef.current);
+  }
+
+  if (layerRef.current) {
+    layerRef.current.remove();
+    layerRef.current = null;
+  }
+
+  layerRef.current = L.polygon(coords, {
+    color: "#2563eb",
+    weight: 3,
+    fillOpacity: 0.15,
+  }).addTo(mapRef.current);
+
+  mapRef.current.fitBounds(layerRef.current.getBounds(), { padding: [20, 20] });
+}
 
   function handleFillTownsFromPolygon() {
     if (!polyCoords || polyCoords.length < 3) {
