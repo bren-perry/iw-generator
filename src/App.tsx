@@ -415,7 +415,6 @@ const TOWNS: Town[] = [
 function parsePolygonFromUrl(url: string): LatLng[] | null {
   try {
     const decoded = decodeURIComponent(url.trim());
-    // Grab the last segment (after '/custom/...' pattern) if present
     const tail = decoded.split("/").pop() || decoded;
     const pairs = tail.split(",").map(s => s.trim()).filter(Boolean);
     const coords: LatLng[] = [];
@@ -423,7 +422,6 @@ function parsePolygonFromUrl(url: string): LatLng[] | null {
       const parts = pair.split(/\s+/).map(Number).filter((n) => !Number.isNaN(n));
       if (parts.length < 2) continue;
       let lat = parts[0], lon = parts[1];
-      // Auto-detect [lon, lat] vs [lat, lon]
       if (Math.abs(lat) > 90 && Math.abs(lon) <= 90) [lat, lon] = [lon, lat];
       coords.push([lat, lon]);
     }
@@ -438,7 +436,7 @@ function parsePolygonFromUrl(url: string): LatLng[] | null {
   }
 }
 
-// Ray-casting point-in-polygon (treat x=lon, y=lat)
+// Ray-casting point-in-polygon (x=lon, y=lat)
 function pointInPolygon(pt: LatLng, poly: LatLng[]) {
   const x = pt[1], y = pt[0];
   let inside = false;
@@ -554,7 +552,7 @@ export default function NotificationGenerator() {
 
   const timestamp = useMemo(() => formatTimestamp(now, tz), [now, tz]);
 
-  /* ---------- Description (unchanged) ---------- */
+  /* ---------- Description (fixed: no duplicate consts) ---------- */
   const description = useMemo(() => {
     const groupInfo = getStormReportGroupInfo(province);
     const reportLine =
@@ -563,10 +561,10 @@ export default function NotificationGenerator() {
 
     if (mode === "regional") {
       const areaText = regions ? `Regions impacted: ${regions}.` : "Regions impacted: multiple communities within the area.";
-      const timeText = timeWindow ? ` Timeframe: ${timeWindow}.` : "";
+      const tf = timeWindow ? ` Timeframe: ${timeWindow}.` : "";
 
       if (regionalChoice === "funnel") {
-        const p1 = `This is a regional notification categorized as ${finalLevelMeta.label}: conditions are favourable for funnel clouds to develop in parts of the area. ${areaText}${timeText}`;
+        const p1 = `This is a regional notification categorized as ${finalLevelMeta.label}: conditions are favourable for funnel clouds to develop in parts of the area. ${areaText}${tf}`;
         const p2 = `What it means: Funnel clouds are narrow, rotating columns that extend from the base of towering cumulus or developing thunderstorms. They rarely pose a significant threat, but they can briefly touch down and become a weak landspout tornado, which is a narrow, ground-based spin-up not connected to a rotating supercell.`;
         const p3 = `If you see a funnel cloud: Move indoors and away from windows, note the time and location, and be ready to shelter quickly if it approaches. Consider reporting it if safe to do so.`;
         const p4 = `Stay aware: Keep an eye on the sky and stay tuned for future Instant Weather custom notifications and alerts from Environment Canada. Be prepared to act quickly if storms intensify.`;
@@ -584,14 +582,14 @@ export default function NotificationGenerator() {
           ? `Possible hazards: ${risks.length === 1 ? risks[0] : risks.slice(0,-1).join(", ") + " & " + risks[risks.length-1]}.`
           : "";
         const torLine = regionalTornadoRisk ? `Tornado risk: ${toTitleCase(regionalTornadoRiskLevel)}.` : "";
-        const p1 = `This is a regional notification categorized as ${finalLevelMeta.label}: conditions may develop to produce severe thunderstorms in parts of the area. ${areaText}${timeText}`;
+        const p1 = `This is a regional notification categorized as ${finalLevelMeta.label}: conditions may develop to produce severe thunderstorms in parts of the area. ${areaText}${tf}`;
         const p2 = [riskLine, torLine].filter(Boolean).join(" ");
         const p3 = `What you should do: Have a way to receive notifications and stay tuned for future Instant Weather custom notifications and alerts from Environment Canada. Be ready to move indoors quickly if skies darken or thunder is heard.`;
         const p4 = `Reports: ${reportLine}`;
         return [p1, p2, p3, p4].filter(Boolean).join("\n\n");
       }
 
-      const pFallback = `This is a regional notification categorized as ${finalLevelMeta.label}. ${areaText}${timeText}`;
+      const pFallback = `This is a regional notification categorized as ${finalLevelMeta.label}. ${areaText}${tf}`;
       const pR = `Reports: ${reportLine}`;
       return [pFallback, pR].join("\n\n");
     }
@@ -599,7 +597,6 @@ export default function NotificationGenerator() {
     // Storm-based
     const townsText = towns.split(/\n|,/).map((t) => t.trim()).filter(Boolean).join(", ");
     const spd = speed ? ` at about ${speed} km/h` : "";
-    const pathText = townsText ? ` Areas in the path include ${townsText}.` : "";
     const timeText = timeWindow ? ` Expected impacts over ${timeWindow}.` : "";
 
     const ordered = orderedHazards(selection);
@@ -682,15 +679,10 @@ export default function NotificationGenerator() {
       }
     };
 
-    const townsTextSummary = townsText;
-    const orderedList = ordered;
-    const primary = orderedList[0];
-    const extras = orderedList.slice(1);
-
     const p1 =
       `This notification is categorized as ${finalLevelMeta.label}: ${levelMeaning}` +
       (location ? ` A storm is near ${location}, moving ${direction}${spd}.` : ` A storm is in your area, moving ${direction}${spd}.`) +
-      (townsTextSummary ? ` Areas in the path include ${townsTextSummary}.` : "") +
+      (townsText ? ` Areas in the path include ${townsText}.` : "") +
       timeText;
 
     const primaryPhrase = primary ? descFor(primary.key as HazardKey, primary.opt.value) : null;
@@ -735,9 +727,7 @@ export default function NotificationGenerator() {
     safetyLines.push("Stay tuned for future Instant Weather custom notifications and alerts from Environment Canada.");
 
     const p4 = `What you should do: ${safetyLines.join(" ")}`;
-
-    const groupInfo = getStormReportGroupInfo(province);
-    const p5 = `Reports: Have a report? If it is safe, please post to ${groupInfo.name}${groupInfo.url ? ` (${groupInfo.url})` : ""}. Include your exact location and the local date/time of your report.`;
+    const p5 = `Reports: ${reportLine}`;
 
     return [p1, p2, p3, p4, p5].filter(Boolean).join("\n\n");
   }, [
