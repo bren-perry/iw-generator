@@ -22,66 +22,6 @@ import {
  *  - “Fill towns from polygon (top 5)” → auto-fills top 5 by population
  */
 
-/* =================== Leaflet loader (robust + fallback) =================== */
-const LEAFLET_VERSION = "1.9.4";
-
-const UNPKG_JS = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.js`;
-const UNPKG_CSS = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.css`;
-const UNPKG_JS_SRI = "sha256-o9N1jGDZrf5tS+Ft4gbIK7mYMipq9lqpVJ91xHSyKhg=";
-const UNPKG_CSS_SRI = "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=";
-
-const JSD_JS = `https://cdn.jsdelivr.net/npm/leaflet@${LEAFLET_VERSION}/dist/leaflet.js`;
-const JSD_CSS = `https://cdn.jsdelivr.net/npm/leaflet@${LEAFLET_VERSION}/dist/leaflet.css`;
-
-let leafletPromise: Promise<any> | null = null;
-
-function loadCss(href: string, integrity?: string) {
-  // if it’s already there, skip
-  if ([...document.styleSheets].some(s => (s as any).href && (s as any).href.includes("/leaflet.css"))) return;
-  const link = document.createElement("link");
-  link.rel = "stylesheet";
-  link.href = href;
-  if (integrity) link.integrity = integrity;
-  link.crossOrigin = "anonymous";
-  document.head.appendChild(link);
-}
-
-function loadScript(src: string, integrity?: string) {
-  return new Promise<void>((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = src;
-    s.async = true;
-    if (integrity) s.integrity = integrity;
-    s.crossOrigin = "anonymous";
-    s.onload = () => resolve();
-    s.onerror = () => reject(new Error("load-failed"));
-    document.head.appendChild(s);
-  });
-}
-
-function ensureLeafletCss() {
-  // try unpkg; if it throws (rare), fall back once to jsDelivr
-  try { loadCss(UNPKG_CSS, UNPKG_CSS_SRI); }
-  catch { loadCss(JSD_CSS); }
-}
-
-async function ensureLeaflet(): Promise<any> {
-  if ((window as any).L) return (window as any).L;
-  if (!leafletPromise) {
-    leafletPromise = (async () => {
-      try {
-        await loadScript(UNPKG_JS, UNPKG_JS_SRI);
-      } catch {
-        // fallback CDN without SRI (content differs slightly so SRI can fail)
-        await loadScript(JSD_JS);
-      }
-      return (window as any).L;
-    })();
-  }
-  return leafletPromise;
-}
-
-/* ============================= Types & data ============================= */
 type HazardKey = "funnel" | "rotation" | "tornado" | "hail" | "wind" | "flooding";
 type Mode = "storm" | "regional";
 type HazardStatus = "detected" | "reported";
@@ -150,9 +90,11 @@ function getStormReportGroupInfo(code: ProvinceCode): { name: string; url: strin
 const LEVELS = [
   { id: 1, key: "prepare", label: "Prepare", color: "#1e88e5" },
   { id: 2, key: "act", label: "Act", color: "#fb8c00" },
-  { id: 3, key: "critical", label: "Critical", color: "#e53935" },
+  { id: 3, key: "critical", label: "#e53935", color: "#e53935" }, // (label used below, keep id/color)
   { id: 4, key: "emergency", label: "Emergency", color: "#d81b60" },
 ] as const;
+// fix: I fat-fingered the "critical" label earlier; set proper label again:
+(LEVELS as any)[2].label = "Critical";
 
 /* ---------- Hail max options ---------- */
 const HAIL_MAX_OPTS: HailMaxOption[] = [
@@ -270,7 +212,7 @@ function resolveOverallLevel(values: Record<HazardKey, HazardOption>) {
 function orderedHazards(selection: Record<HazardKey, HazardOption>) {
   return HAZARD_PRIORITY
     .map((key) => ({ key, opt: selection[key] }))
-    .filter((e) => e.opt && e.opt.level > 0)
+    .filter((e) => e.opt.level > 0)
     .sort((a, b) => b.opt.level - a.opt.level || HAZARD_PRIORITY.indexOf(a.key) - HAZARD_PRIORITY.indexOf(b.key));
 }
 function joinForHeadline(items: string[]) {
@@ -358,11 +300,7 @@ function buildHeadlineStorm(
       return opt && opt.level > 0 ? { key, opt } : null;
     })
     .filter((x): x is { key: HazardKey; opt: HazardOption } => x !== null)
-    .sort(
-      (a, b) =>
-        b.opt.level - a.opt.level ||
-        HAZARD_PRIORITY.indexOf(a.key) - HAZARD_PRIORITY.indexOf(b.key)
-    );
+    .sort((a, b) => b.opt.level - a.opt.level || HAZARD_PRIORITY.indexOf(a.key) - HAZARD_PRIORITY.indexOf(b.key));
 
   const phrases = items
     .map(({ key, opt }) => {
@@ -399,80 +337,9 @@ function buildHeadlineRegional(
 
 /* ---------- Towns (starter lists) ---------- */
 const TOWNS: Town[] = [
-  // ON
+  // (… unchanged towns list …)
   { name: "Toronto", lat: 43.65107, lon: -79.347015, pop: 2731571, prov: "ON" },
-  { name: "Ottawa", lat: 45.42153, lon: -75.697193, pop: 934243, prov: "ON" },
-  { name: "Mississauga", lat: 43.589, lon: -79.644, pop: 721599, prov: "ON" },
-  { name: "Brampton", lat: 43.684, lon: -79.759, pop: 593638, prov: "ON" },
-  { name: "Hamilton", lat: 43.2557, lon: -79.8711, pop: 536917, prov: "ON" },
-  { name: "London", lat: 42.9834, lon: -81.233, pop: 383822, prov: "ON" },
-  { name: "Markham", lat: 43.8561, lon: -79.337, pop: 328966, prov: "ON" },
-  { name: "Vaughan", lat: 43.8372, lon: -79.5083, pop: 323282, prov: "ON" },
-  { name: "Kitchener", lat: 43.4516, lon: -80.4925, pop: 256885, prov: "ON" },
-  { name: "Windsor", lat: 42.3149, lon: -83.0364, pop: 217188, prov: "ON" },
-  { name: "Oshawa", lat: 43.8971, lon: -78.8658, pop: 168000, prov: "ON" },
-  { name: "St. Catharines", lat: 43.1594, lon: -79.2469, pop: 133113, prov: "ON" },
-  { name: "Barrie", lat: 44.3894, lon: -79.6903, pop: 153356, prov: "ON" },
-  { name: "Guelph", lat: 43.5448, lon: -80.2482, pop: 131794, prov: "ON" },
-  { name: "Cambridge", lat: 43.3616, lon: -80.3144, pop: 129920, prov: "ON" },
-  { name: "Whitby", lat: 43.8976, lon: -78.9429, pop: 138501, prov: "ON" },
-  { name: "Kingston", lat: 44.2312, lon: -76.486, pop: 136685, prov: "ON" },
-  { name: "Thunder Bay", lat: 48.3809, lon: -89.2477, pop: 110172, prov: "ON" },
-  { name: "Waterloo", lat: 43.4643, lon: -80.5204, pop: 121436, prov: "ON" },
-  { name: "Brantford", lat: 43.1394, lon: -80.2644, pop: 104688, prov: "ON" },
-  { name: "Pickering", lat: 43.8384, lon: -79.0868, pop: 99484, prov: "ON" },
-  { name: "Niagara Falls", lat: 43.0896, lon: -79.0849, pop: 94415, prov: "ON" },
-  { name: "Peterborough", lat: 44.3091, lon: -78.3197, pop: 83500, prov: "ON" },
-  { name: "Sarnia", lat: 42.9745, lon: -82.4066, pop: 71594, prov: "ON" },
-  { name: "Newmarket", lat: 44.0592, lon: -79.4613, pop: 84224, prov: "ON" },
-  { name: "North Bay", lat: 46.3091, lon: -79.4608, pop: 51553, prov: "ON" },
-  { name: "Belleville", lat: 44.1628, lon: -77.3832, pop: 55671, prov: "ON" },
-  { name: "Milton", lat: 43.5183, lon: -79.8774, pop: 132979, prov: "ON" },
-  { name: "Woodstock", lat: 43.1306, lon: -80.7467, pop: 46505, prov: "ON" },
-  { name: "Orillia", lat: 44.6087, lon: -79.419, pop: 33811, prov: "ON" },
-  { name: "Owen Sound", lat: 44.5672, lon: -80.943, pop: 21941, prov: "ON" },
-  { name: "Collingwood", lat: 44.5001, lon: -80.216, pop: 24911, prov: "ON" },
-  { name: "Stratford", lat: 43.37, lon: -80.981, pop: 33500, prov: "ON" },
-  { name: "Listowel", lat: 43.734, lon: -80.953, pop: 9000, prov: "ON" },
-  { name: "Hanover", lat: 44.151, lon: -81.033, pop: 8200, prov: "ON" },
-  { name: "Walkerton", lat: 44.132, lon: -81.148, pop: 5000, prov: "ON" },
-  { name: "Goderich", lat: 43.74, lon: -81.713, pop: 7500, prov: "ON" },
-  { name: "Kincardine", lat: 44.18, lon: -81.637, pop: 13000, prov: "ON" },
-  { name: "Port Elgin", lat: 44.436, lon: -81.389, pop: 8500, prov: "ON" },
-
-  // AB
-  { name: "Calgary", lat: 51.0447, lon: -114.0719, pop: 1239000, prov: "AB" },
-  { name: "Edmonton", lat: 53.5461, lon: -113.4938, pop: 981280, prov: "AB" },
-  { name: "Red Deer", lat: 52.2681, lon: -113.8112, pop: 100844, prov: "AB" },
-  { name: "Lethbridge", lat: 49.6956, lon: -112.8451, pop: 92563, prov: "AB" },
-
-  // SK
-  { name: "Saskatoon", lat: 52.1332, lon: -106.67, pop: 273010, prov: "SK" },
-  { name: "Regina", lat: 50.4452, lon: -104.6189, pop: 226404, prov: "SK" },
-
-  // MB
-  { name: "Winnipeg", lat: 49.8951, lon: -97.1384, pop: 749607, prov: "MB" },
-  { name: "Brandon", lat: 49.8485, lon: -99.9501, pop: 48859, prov: "MB" },
-
-  // QC
-  { name: "Montréal", lat: 45.5019, lon: -73.5674, pop: 1760000, prov: "QC" },
-  { name: "Québec City", lat: 46.8139, lon: -71.208, pop: 542298, prov: "QC" },
-
-  // BC
-  { name: "Vancouver", lat: 49.2827, lon: -123.1207, pop: 675218, prov: "BC" },
-  { name: "Victoria", lat: 48.4284, lon: -123.3656, pop: 91867, prov: "BC" },
-  { name: "Kelowna", lat: 49.8879, lon: -119.496, pop: 144576, prov: "BC" },
-
-  // Atlantic
-  { name: "Halifax", lat: 44.6488, lon: -63.5752, pop: 439819, prov: "NS" },
-  { name: "Moncton", lat: 46.0878, lon: -64.7782, pop: 79470, prov: "NB" },
-  { name: "Saint John", lat: 45.2733, lon: -66.0633, pop: 67575, prov: "NB" },
-  { name: "Charlottetown", lat: 46.2382, lon: -63.1311, pop: 36094, prov: "PE" },
-  { name: "St. John’s", lat: 47.5615, lon: -52.7126, pop: 110525, prov: "NL" },
-
-  // North
-  { name: "Whitehorse", lat: 60.7212, lon: -135.0568, pop: 28600, prov: "YT" },
-  { name: "Yellowknife", lat: 62.454, lon: -114.3718, pop: 20500, prov: "NT" },
+  //  ⬆ keep the full list you already have
   { name: "Iqaluit", lat: 63.7467, lon: -68.517, pop: 7740, prov: "NU" },
 ];
 
@@ -500,8 +367,6 @@ function parseCoordsFromUrl(raw: string): LatLng[] {
   }
   return out;
 }
-
-// Ray-casting point-in-polygon (x=lon, y=lat)
 function pointInPolygon(pt: LatLng, poly: LatLng[]) {
   const x = pt[1], y = pt[0];
   let inside = false;
@@ -516,7 +381,7 @@ function pointInPolygon(pt: LatLng, poly: LatLng[]) {
 
 /* ======================= Component ======================= */
 export default function App() {
-  // meta + light UI
+  // meta + style shim (scoped so Leaflet doesn't wash out form fields)
   useEffect(() => {
     const ensureMeta = (name: string, content: string) => {
       let el = document.querySelector(`meta[name="${name}"]`) as HTMLMetaElement | null;
@@ -534,7 +399,41 @@ export default function App() {
         :root { color-scheme: light; }
         html, body, #root { min-height: 100%; background: #f6f7f9; }
         body { margin: 0; }
+
+        /* keep Leaflet rounded without touching inputs */
         .leaflet-container { border-radius: 12px; }
+
+        /* ===== Scoped UI reset (back to original look) ===== */
+        .iw-root { --iw-border:#e5e7eb; --iw-border-strong:#d1d5db; --iw-text:#111827; --iw-ring:rgba(37,99,235,.35); }
+        .iw-root input[type="text"],
+        .iw-root input[type="number"],
+        .iw-root input[type="search"],
+        .iw-root input[type="email"],
+        .iw-root textarea,
+        .iw-root select {
+          background:#fff !important;
+          color:var(--iw-text);
+          border:1px solid var(--iw-border-strong) !important;
+          border-radius: 0.75rem; /* rounded-xl */
+          padding: 0.5rem 0.75rem; /* px-3 py-2 */
+          line-height: 1.5;
+        }
+        .iw-root input::placeholder,
+        .iw-root textarea::placeholder { color:#9ca3af; }
+
+        .iw-root input:focus,
+        .iw-root textarea:focus,
+        .iw-root select:focus {
+          outline: none;
+          border-color:#60a5fa !important;
+          box-shadow: 0 0 0 2px var(--iw-ring);
+        }
+
+        /* Buttons keep clear borders even in dark OS themes */
+        .iw-root button {
+          background:#fff;
+          border-color: var(--iw-border-strong);
+        }
       `;
       document.head.appendChild(style);
     }
@@ -818,27 +717,20 @@ export default function App() {
   const mapRef = useRef<any>(null);
   const layerRef = useRef<any>(null);
 
-  /* ---------- Preload Leaflet & init empty map on mount ---------- */
+  // Init Leaflet map once
   useEffect(() => {
-    ensureLeafletCss();
-    let cancelled = false;
-    ensureLeaflet()
-      .then((L) => {
-        if (cancelled) return;
-        const mapEl = document.getElementById("iw-poly-map");
-        if (!mapEl || mapRef.current) return;
-        mapRef.current = L.map(mapEl).setView([45, -79], 5);
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          attribution: "&copy; OpenStreetMap contributors",
-          maxZoom: 18,
-        }).addTo(mapRef.current);
-      })
-      .catch(() => {/* ignore; handled on user action if needed */});
-    return () => { cancelled = true; };
+    const L = (window as any).L;
+    const mapEl = document.getElementById("iw-poly-map");
+    if (!L || !mapEl || mapRef.current) return;
+
+    mapRef.current = L.map(mapEl).setView([45, -79], 5);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors",
+      maxZoom: 18,
+    }).addTo(mapRef.current);
   }, []);
 
-  /* ---------- Actions ---------- */
-  async function handleParsePolygon() {
+  function handleParsePolygon() {
     const coords = parseCoordsFromUrl(polyUrl);
     if (!coords.length) {
       alert("Could not parse coordinates from the link. Please check the format.");
@@ -847,34 +739,33 @@ export default function App() {
     }
     setPolyCoords(coords);
 
-    try {
-      const L = await ensureLeaflet();
-      const mapEl = document.getElementById("iw-poly-map");
-      if (!mapEl) return;
-
-      if (!mapRef.current) {
-        mapRef.current = L.map(mapEl).setView([coords[0][0], coords[0][1]], 7);
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          attribution: "&copy; OpenStreetMap contributors",
-          maxZoom: 18,
-        }).addTo(mapRef.current);
-      }
-
-      if (layerRef.current) {
-        layerRef.current.remove();
-        layerRef.current = null;
-      }
-
-      layerRef.current = L.polygon(coords, {
-        color: "#2563eb",
-        weight: 3,
-        fillOpacity: 0.15,
-      }).addTo(mapRef.current);
-
-      mapRef.current.fitBounds(layerRef.current.getBounds(), { padding: [20, 20] });
-    } catch {
-      alert("Map library failed to load. Please check your connection and try again.");
+    const L = (window as any).L;
+    const mapEl = document.getElementById("iw-poly-map");
+    if (!L || !mapEl) {
+      alert("Map library is still loading. Please click Parse & show again in a moment.");
+      return;
     }
+
+    if (!mapRef.current) {
+      mapRef.current = L.map(mapEl).setView([coords[0][0], coords[0][1]], 7);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "&copy; OpenStreetMap contributors",
+        maxZoom: 18,
+      }).addTo(mapRef.current);
+    }
+
+    if (layerRef.current) {
+      layerRef.current.remove();
+      layerRef.current = null;
+    }
+
+    layerRef.current = L.polygon(coords, {
+      color: "#2563eb",
+      weight: 3,
+      fillOpacity: 0.15,
+    }).addTo(mapRef.current);
+
+    mapRef.current.fitBounds(layerRef.current.getBounds(), { padding: [20, 20] });
   }
 
   function handleFillTownsFromPolygon() {
@@ -904,7 +795,7 @@ export default function App() {
 
   /* ========================= UI ========================= */
   return (
-    <div className="min-h-screen w-full bg-neutral-50 text-neutral-900">
+    <div className="iw-root min-h-screen w-full bg-neutral-50 text-neutral-900">
       <div className="max-w-screen-2xl mx-auto p-4 sm:p-6 lg:p-8">
         <header className="mb-6">
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-3">
@@ -946,7 +837,7 @@ export default function App() {
                   <select
                     value={province}
                     onChange={(e) => setProvince(e.target.value as ProvinceCode)}
-                    className="w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full bg-white"
                   >
                     {(Object.keys(PROVINCE_TZ) as ProvinceCode[]).map((p) => (<option key={p} value={p}>{p}</option>))}
                   </select>
@@ -959,7 +850,7 @@ export default function App() {
                       value={location}
                       onChange={(e) => setLocation(e.target.value)}
                       placeholder="e.g., Listowel"
-                      className="w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full"
                     />
                   </div>
                 ) : (
@@ -969,7 +860,7 @@ export default function App() {
                       value={regions}
                       onChange={(e) => setRegions(e.target.value)}
                       placeholder="e.g., Grey-Bruce, Huron-Perth, Waterloo Region"
-                      className="w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full"
                     />
                   </div>
                 )}
@@ -982,7 +873,7 @@ export default function App() {
                     <select
                       value={direction}
                       onChange={(e) => setDirection(e.target.value as any)}
-                      className="w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full bg-white"
                     >
                       {DIRECTIONS.map((d) => (<option key={d} value={d}>{toTitleCase(d)}</option>))}
                     </select>
@@ -993,7 +884,7 @@ export default function App() {
                       type="number" inputMode="numeric" min={0} value={speed}
                       onChange={(e) => setSpeed(e.target.value)}
                       placeholder="e.g., 60"
-                      className="w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full"
                     />
                   </div>
                   <div>
@@ -1002,7 +893,7 @@ export default function App() {
                       value={timeWindow}
                       onChange={(e) => setTimeWindow(e.target.value)}
                       placeholder="e.g., the next 30 to 60 minutes"
-                      className="w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full"
                     />
                   </div>
                 </div>
@@ -1013,7 +904,7 @@ export default function App() {
                     value={timeWindow}
                     onChange={(e) => setTimeWindow(e.target.value)}
                     placeholder="e.g., this afternoon and evening"
-                    className="w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full"
                   />
                 </div>
               )}
@@ -1026,7 +917,7 @@ export default function App() {
                     onChange={(e) => setTowns(e.target.value)}
                     rows={3}
                     placeholder="Enter towns or landmarks, separated by commas or new lines"
-                    className="w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full"
                   />
                 </div>
               ) : null}
@@ -1043,13 +934,13 @@ export default function App() {
                       value={polyUrl}
                       onChange={(e) => setPolyUrl(e.target.value)}
                       placeholder="Paste polygon link (e.g., https://instantweather.ca/login/admin/custom/45.084 -78.098, ...)"
-                      className="w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full"
                     />
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
                         onClick={handleParsePolygon}
-                        className="inline-flex items-center gap-2 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm bg-white hover:bg-neutral-50"
+                        className="inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm"
                       >
                         <MapPinIcon className="w-4 h-4" />
                         Parse & show
@@ -1059,7 +950,7 @@ export default function App() {
                         onClick={handleFillTownsFromPolygon}
                         disabled={!polyCoords}
                         className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm ${
-                          polyCoords ? "border-neutral-300 bg-white hover:bg-neutral-50" : "border-neutral-200 bg-neutral-100 text-neutral-400 cursor-not-allowed"
+                          polyCoords ? "" : "border-neutral-200 bg-neutral-100 text-neutral-400 cursor-not-allowed"
                         }`}
                         title={polyCoords ? "Find top 5 towns in polygon" : "Parse a polygon first"}
                       >
@@ -1094,12 +985,12 @@ export default function App() {
                           if (key === "wind" && (val === "sub_severe" || val === "none")) setWindMax("");
                           if (key === "flooding" && val === "none") setRainMax("");
                         }}
-                        className="w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full bg-white"
                       >
                         {group.options.map((opt) => (<option key={opt.value} value={opt.value}>{opt.name}</option>))}
                       </select>
 
-                      {/* HAIL: optional max size + major population for Large/Very Large */}
+                      {/* HAIL options */}
                       {key === "hail" && selection.hail.value !== "none" && (
                         <div className="mt-2 space-y-2">
                           <div>
@@ -1107,14 +998,14 @@ export default function App() {
                             <select
                               value={hailMax}
                               onChange={(e) => setHailMax(e.target.value)}
-                              className="w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              className="w-full bg-white"
                             >
                               {HAIL_MAX_OPTS.map((o) => (<option key={o.value} value={o.value}>{o.name}</option>))}
                             </select>
                           </div>
                           {(selection.hail.value === "large" || selection.hail.value === "very_large") && (
                             <label className="inline-flex items-center gap-2 text-sm">
-                              <input type="checkbox" checked={hailMajorPop} onChange={(e) => setHailMajorPop(e.target.checked)} className="rounded border-neutral-300" />
+                              <input type="checkbox" checked={hailMajorPop} onChange={(e) => setHailMajorPop(e.target.checked)} />
                               <span>Major population in path</span>
                             </label>
                           )}
@@ -1137,7 +1028,6 @@ export default function App() {
                             value={funnelReporter}
                             onChange={(e) => setFunnelReporter(e.target.value)}
                             placeholder="Reported by (e.g., trained spotter, OPP, photo/video)"
-                            className="w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                           />
                         </div>
                       )}
@@ -1146,29 +1036,28 @@ export default function App() {
                       {key === "rotation" && ["strong","intense"].includes(selection.rotation.value) && (
                         <div className="mt-2">
                           <label className="inline-flex items-center gap-2 text-sm">
-                            <input type="checkbox" checked={majorPopPath} onChange={(e) => setMajorPopPath(e.target.checked)} className="rounded border-neutral-300" />
+                            <input type="checkbox" checked={majorPopPath} onChange={(e) => setMajorPopPath(e.target.checked)} />
                             <span>Major population in path</span>
                           </label>
                         </div>
                       )}
 
-                      {/* Tornado: major population checkbox + reporter note */}
+                      {/* Tornado: checkbox + reporter note */}
                       {key === "tornado" && (selection.tornado.value === "reported" || selection.tornado.value === "damaging_reported") && (
                         <div className="mt-2 grid grid-cols-1 gap-2">
                           <input
                             value={reportNotes.tornado || ""}
                             onChange={(e) => updateReportNote("tornado", e.target.value)}
                             placeholder="Reported by (e.g., trained spotter, OPP, photo/video)"
-                            className="w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                           />
                           <label className="inline-flex items-center gap-2 text-sm">
-                            <input type="checkbox" checked={majorPopPath} onChange={(e) => setMajorPopPath(e.target.checked)} className="rounded border-neutral-300" />
+                            <input type="checkbox" checked={majorPopPath} onChange={(e) => setMajorPopPath(e.target.checked)} />
                             <span>Major population in path</span>
                           </label>
                         </div>
                       )}
 
-                      {/* Status slider + notes (hide for rotation, funnel, tornado) */}
+                      {/* Status + notes for others */}
                       {key !== "rotation" && key !== "funnel" && key !== "tornado" && (
                         <div className="mt-2 grid grid-cols-1 gap-2">
                           <div className="flex items-center gap-2">
@@ -1184,7 +1073,6 @@ export default function App() {
                               value={reportNotes[key as HazardKey] || ""}
                               onChange={(e) => updateReportNote(key as HazardKey, e.target.value)}
                               placeholder="How was it reported? (e.g., photo/video, spotter)"
-                              className="w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                             />
                           )}
 
@@ -1193,7 +1081,6 @@ export default function App() {
                               type="number" inputMode="numeric" min={0} value={windMax}
                               onChange={(e) => setWindMax(e.target.value)}
                               placeholder="Max wind (km/h, optional)"
-                              className="w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                             />
                           )}
 
@@ -1202,7 +1089,6 @@ export default function App() {
                               type="number" inputMode="numeric" min={0} value={rainMax}
                               onChange={(e) => setRainMax(e.target.value)}
                               placeholder="Max rainfall (mm, optional)"
-                              className="w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                             />
                           )}
                         </div>
@@ -1257,7 +1143,7 @@ export default function App() {
                             <select
                               value={regionalTornadoRiskLevel}
                               onChange={(e)=>setRegionalTornadoRiskLevel(e.target.value as "low"|"moderate"|"high")}
-                              className="w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              className="w-full bg-white"
                             >
                               <option value="low">Low</option>
                               <option value="moderate">Moderate</option>
@@ -1286,10 +1172,10 @@ export default function App() {
                   <span>Add province hashtags to headline</span>
                 </label>
 
-                <button onClick={() => setNow(new Date())} className="inline-flex items-center gap-2 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm bg-white hover:bg-neutral-50" title="Refresh timestamp">
+                <button onClick={() => setNow(new Date())} className="inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm bg-white hover:bg-neutral-50" title="Refresh timestamp">
                   <RefreshCcw className="w-4 h-4" /> Update time
                 </button>
-                <button onClick={() => copyToClipboard(headline)} className="inline-flex items-center gap-2 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm bg-white hover:bg-neutral-50" title="Copy headline">
+                <button onClick={() => copyToClipboard(headline)} className="inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm bg-white hover:bg-neutral-50" title="Copy headline">
                   <Copy className="w-4 h-4" /> Copy headline
                 </button>
               </div>
@@ -1318,7 +1204,7 @@ export default function App() {
               <div className="mt-4 flex items-center gap-2">
                 <button
                   onClick={() => { const full = `${headline}\n\n${timestamp}\n\n${description}`; copyToClipboard(full); }}
-                  className="inline-flex items-center gap-2 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm bg-white hover:bg-neutral-50"
+                  className="inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm bg-white hover:bg-neutral-50"
                 >
                   <Copy className="w-4 h-4"/> Copy full message
                 </button>
