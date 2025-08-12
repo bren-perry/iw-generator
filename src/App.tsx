@@ -821,26 +821,21 @@ export default function App() {
   }
 
   function handleFillTownsFromPolygon() {
-    if (!polyCoords || polyCoords.length < 3) { alert("Parse a polygon first."); return; }
-    if (!townsDb)         { alert("Towns database not loaded yet."); return; }
+  if (!polyCoords || polyCoords.length < 3) { alert("Parse a polygon first."); return; }
+  if (!townsDb) { alert("Towns database not loaded yet."); return; }
 
-    const inside = townsDb.filter((t) => pointInPolygon([t.lat, t.lon], polyCoords));
-    if (inside.length === 0) {
-      alert("No towns from the database are inside this polygon. If this seems wrong, try regenerating towns-on.json.");
-      return;
-    }
-    const top5 = inside.sort((a, b) => b.pop - a.pop).slice(0, 5);
-    setTowns(top5.map((t) => t.name).join(", "));
-  }
-  function handleFillTownsFromPolygon() {
-  if (!polyCoords || polyCoords.length < 3) {
-    alert("Parse a polygon first.");
+  const inside = townsDb.filter((t) => pointInPolygon([t.lat, t.lon], polyCoords));
+
+  // De-dupe by normalized name, keep largest pop
+  const unique = dedupeByNameKeepLargest(inside);
+  if (unique.length === 0) {
+    alert("No towns from the database are inside this polygon. If this seems wrong, try regenerating towns-on.json.");
     return;
   }
-  if (!townsDb) {
-    alert("Towns database not loaded yet.");
-    return;
-  }
+
+  const top5 = [...unique].sort((a, b) => b.pop - a.pop).slice(0, 5);
+  setTowns(top5.map((t) => t.name).join(", "));
+}
 
   // Towns whose point is inside the polygon
   const inside = townsDb.filter((t) => pointInPolygon([t.lat, t.lon], polyCoords));
