@@ -22,42 +22,61 @@ import {
  *  - “Fill towns from polygon (top 5)” → auto-fills top 5 by population
  */
 
-/* =================== Leaflet loader (no race conditions) =================== */
-const LEAFLET_JS =
-  "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-const LEAFLET_CSS =
-  "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-const LEAFLET_JS_SRI =
-  "sha256-o9N1jGDZrf5tS+Ft4gbIK7mYMipq9lqpVJ91xHSyKhg=";
-const LEAFLET_CSS_SRI =
-  "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=";
+/* =================== Leaflet loader (robust + fallback) =================== */
+const LEAFLET_VERSION = "1.9.4";
+
+const UNPKG_JS = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.js`;
+const UNPKG_CSS = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.css`;
+const UNPKG_JS_SRI = "sha256-o9N1jGDZrf5tS+Ft4gbIK7mYMipq9lqpVJ91xHSyKhg=";
+const UNPKG_CSS_SRI = "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=";
+
+const JSD_JS = `https://cdn.jsdelivr.net/npm/leaflet@${LEAFLET_VERSION}/dist/leaflet.js`;
+const JSD_CSS = `https://cdn.jsdelivr.net/npm/leaflet@${LEAFLET_VERSION}/dist/leaflet.css`;
 
 let leafletPromise: Promise<any> | null = null;
 
-function ensureLeafletCss() {
-  if (document.getElementById("__leaflet_css__")) return;
+function loadCss(href: string, integrity?: string) {
+  // if it’s already there, skip
+  if ([...document.styleSheets].some(s => (s as any).href && (s as any).href.includes("/leaflet.css"))) return;
   const link = document.createElement("link");
-  link.id = "__leaflet_css__";
   link.rel = "stylesheet";
-  link.href = LEAFLET_CSS;
-  link.crossOrigin = "";
-  link.integrity = LEAFLET_CSS_SRI;
+  link.href = href;
+  if (integrity) link.integrity = integrity;
+  link.crossOrigin = "anonymous";
   document.head.appendChild(link);
 }
 
-function ensureLeaflet(): Promise<any> {
-  if ((window as any).L) return Promise.resolve((window as any).L);
+function loadScript(src: string, integrity?: string) {
+  return new Promise<void>((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.async = true;
+    if (integrity) s.integrity = integrity;
+    s.crossOrigin = "anonymous";
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error("load-failed"));
+    document.head.appendChild(s);
+  });
+}
+
+function ensureLeafletCss() {
+  // try unpkg; if it throws (rare), fall back once to jsDelivr
+  try { loadCss(UNPKG_CSS, UNPKG_CSS_SRI); }
+  catch { loadCss(JSD_CSS); }
+}
+
+async function ensureLeaflet(): Promise<any> {
+  if ((window as any).L) return (window as any).L;
   if (!leafletPromise) {
-    leafletPromise = new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = LEAFLET_JS;
-      s.async = true;
-      s.crossOrigin = "";
-      s.integrity = LEAFLET_JS_SRI;
-      s.onload = () => resolve((window as any).L);
-      s.onerror = () => reject(new Error("Failed to load Leaflet"));
-      document.head.appendChild(s);
-    });
+    leafletPromise = (async () => {
+      try {
+        await loadScript(UNPKG_JS, UNPKG_JS_SRI);
+      } catch {
+        // fallback CDN without SRI (content differs slightly so SRI can fail)
+        await loadScript(JSD_JS);
+      }
+      return (window as any).L;
+    })();
   }
   return leafletPromise;
 }
