@@ -766,33 +766,19 @@ export default function App() {
   const layerRef = useRef<any>(null);
 
   // Initialize/Update Leaflet map when polygon changes
+  // Init Leaflet map once (no polygon work here)
   useEffect(() => {
     const L = (window as any).L;
     const mapEl = document.getElementById("iw-poly-map");
-    if (!L || !mapEl) return;
+    if (!L || !mapEl || mapRef.current) return;
+  
+    mapRef.current = L.map(mapEl).setView([45, -79], 5);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors",
+      maxZoom: 18,
+    }).addTo(mapRef.current);
+  }, []);  // <-- empty deps; run once
 
-    if (!mapRef.current) {
-      mapRef.current = L.map(mapEl).setView([45, -79], 5);
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: "&copy; OpenStreetMap contributors",
-        maxZoom: 18,
-      }).addTo(mapRef.current);
-    }
-    const map = mapRef.current;
-
-    if (layerRef.current) {
-      layerRef.current.remove();
-      layerRef.current = null;
-    }
-
-    if (polyCoords && polyCoords.length >= 3) {
-      layerRef.current = (window as any).L
-        .polygon(polyCoords, { color: "#2563eb", weight: 3, fillOpacity: 0.15 })
-        .addTo(map);
-      const bounds = (window as any).L.latLngBounds(polyCoords as any);
-      map.fitBounds(bounds, { padding: [20, 20] });
-    }
-  }, [polyCoords]);
 
   function handleParsePolygon() {
     const coords = parseCoordsFromUrl(polyUrl);
