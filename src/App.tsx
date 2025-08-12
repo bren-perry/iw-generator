@@ -22,6 +22,47 @@ import {
  *  - “Fill towns from polygon (top 5)” → auto-fills top 5 by population
  */
 
+/* =================== Leaflet loader (no race conditions) =================== */
+const LEAFLET_JS =
+  "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+const LEAFLET_CSS =
+  "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+const LEAFLET_JS_SRI =
+  "sha256-o9N1jGDZrf5tS+Ft4gbIK7mYMipq9lqpVJ91xHSyKhg=";
+const LEAFLET_CSS_SRI =
+  "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=";
+
+let leafletPromise: Promise<any> | null = null;
+
+function ensureLeafletCss() {
+  if (document.getElementById("__leaflet_css__")) return;
+  const link = document.createElement("link");
+  link.id = "__leaflet_css__";
+  link.rel = "stylesheet";
+  link.href = LEAFLET_CSS;
+  link.crossOrigin = "";
+  link.integrity = LEAFLET_CSS_SRI;
+  document.head.appendChild(link);
+}
+
+function ensureLeaflet(): Promise<any> {
+  if ((window as any).L) return Promise.resolve((window as any).L);
+  if (!leafletPromise) {
+    leafletPromise = new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = LEAFLET_JS;
+      s.async = true;
+      s.crossOrigin = "";
+      s.integrity = LEAFLET_JS_SRI;
+      s.onload = () => resolve((window as any).L);
+      s.onerror = () => reject(new Error("Failed to load Leaflet"));
+      document.head.appendChild(s);
+    });
+  }
+  return leafletPromise;
+}
+
+/* ============================= Types & data ============================= */
 type HazardKey = "funnel" | "rotation" | "tornado" | "hail" | "wind" | "flooding";
 type Mode = "storm" | "regional";
 type HazardStatus = "detected" | "reported";
@@ -210,12 +251,8 @@ function resolveOverallLevel(values: Record<HazardKey, HazardOption>) {
 function orderedHazards(selection: Record<HazardKey, HazardOption>) {
   return HAZARD_PRIORITY
     .map((key) => ({ key, opt: selection[key] }))
-    .filter((e) => e.opt.level > 0)
-    .sort(
-      (a, b) =>
-        b.opt.level - a.opt.level ||
-        HAZARD_PRIORITY.indexOf(a.key) - HAZARD_PRIORITY.indexOf(b.key)
-    );
+    .filter((e) => e.opt && e.opt.level > 0)
+    .sort((a, b) => b.opt.level - a.opt.level || HAZARD_PRIORITY.indexOf(a.key) - HAZARD_PRIORITY.indexOf(b.key));
 }
 function joinForHeadline(items: string[]) {
   if (items.length <= 1) return items[0] ?? "";
@@ -421,8 +458,6 @@ const TOWNS: Town[] = [
 ];
 
 /* ---------- Geometry helpers ---------- */
-// Robust parser for IW custom links like:
-// https://instantweather.ca/login/admin/custom/45.084%20-78.098%2C45.326%20-77.386%2C...
 function parseCoordsFromUrl(raw: string): LatLng[] {
   if (!raw) return [];
   let s = raw.trim();
@@ -439,7 +474,6 @@ function parseCoordsFromUrl(raw: string): LatLng[] {
     const lon = parseFloat(pair[1]);
     if (Number.isFinite(lat) && Number.isFinite(lon)) out.push([lat, lon]);
   }
-  // remove trailing duplicate (often the first point repeated)
   if (out.length >= 2) {
     const [aLat, aLon] = out[0];
     const [bLat, bLon] = out[out.length - 1];
@@ -569,7 +603,7 @@ export default function App() {
 
   const timestamp = useMemo(() => formatTimestamp(now, tz), [now, tz]);
 
-  /* ---------- Description (no duplicate consts; ‘rep’ used) ---------- */
+  /* ---------- Description ---------- */
   const description = useMemo(() => {
     const groupInfo = getStormReportGroupInfo(province);
     const reportLine =
@@ -764,62 +798,64 @@ export default function App() {
   const [polyCoords, setPolyCoords] = useState<LatLng[] | null>(null);
   const mapRef = useRef<any>(null);
   const layerRef = useRef<any>(null);
-  const [leafletReady, setLeafletReady] = useState(false);
 
-  // Detect when Leaflet has finished loading
+  /* ---------- Preload Leaflet & init empty map on mount ---------- */
   useEffect(() => {
-    if ((window as any).L) { setLeafletReady(true); return; }
-    let tries = 0;
-    const iv = setInterval(() => {
-      if ((window as any).L) { setLeafletReady(true); clearInterval(iv); }
-      else if (++tries > 200) { clearInterval(iv); } // ~10s max
-    }, 50);
-    return () => clearInterval(iv);
+    ensureLeafletCss();
+    let cancelled = false;
+    ensureLeaflet()
+      .then((L) => {
+        if (cancelled) return;
+        const mapEl = document.getElementById("iw-poly-map");
+        if (!mapEl || mapRef.current) return;
+        mapRef.current = L.map(mapEl).setView([45, -79], 5);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution: "&copy; OpenStreetMap contributors",
+          maxZoom: 18,
+        }).addTo(mapRef.current);
+      })
+      .catch(() => {/* ignore; handled on user action if needed */});
+    return () => { cancelled = true; };
   }, []);
 
-  // Initialize the map once Leaflet is ready
-  useEffect(() => {
-    if (!leafletReady) return;
-    const L = (window as any).L;
-    const mapEl = document.getElementById("iw-poly-map");
-    if (!mapEl) return;
-
-    if (!mapRef.current) {
-      mapRef.current = L.map(mapEl).setView([45, -79], 5);
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: "&copy; OpenStreetMap contributors",
-        maxZoom: 18,
-      }).addTo(mapRef.current);
-    }
-  }, [leafletReady]);
-
-  // Draw/fit polygon whenever coords change and Leaflet is ready
-  useEffect(() => {
-    if (!leafletReady || !mapRef.current) return;
-    const L = (window as any).L;
-
-    if (layerRef.current) {
-      layerRef.current.remove();
-      layerRef.current = null;
-    }
-
-    if (polyCoords && polyCoords.length >= 3) {
-      layerRef.current = L
-        .polygon(polyCoords, { color: "#2563eb", weight: 3, fillOpacity: 0.15 })
-        .addTo(mapRef.current);
-      const bounds = L.latLngBounds(polyCoords as any);
-      mapRef.current.fitBounds(bounds, { padding: [20, 20] });
-    }
-  }, [polyCoords, leafletReady]);
-
-  function handleParsePolygon() {
+  /* ---------- Actions ---------- */
+  async function handleParsePolygon() {
     const coords = parseCoordsFromUrl(polyUrl);
     if (!coords.length) {
       alert("Could not parse coordinates from the link. Please check the format.");
       setPolyCoords(null);
       return;
     }
-    setPolyCoords(coords); // drawing handled by the effect above
+    setPolyCoords(coords);
+
+    try {
+      const L = await ensureLeaflet();
+      const mapEl = document.getElementById("iw-poly-map");
+      if (!mapEl) return;
+
+      if (!mapRef.current) {
+        mapRef.current = L.map(mapEl).setView([coords[0][0], coords[0][1]], 7);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution: "&copy; OpenStreetMap contributors",
+          maxZoom: 18,
+        }).addTo(mapRef.current);
+      }
+
+      if (layerRef.current) {
+        layerRef.current.remove();
+        layerRef.current = null;
+      }
+
+      layerRef.current = L.polygon(coords, {
+        color: "#2563eb",
+        weight: 3,
+        fillOpacity: 0.15,
+      }).addTo(mapRef.current);
+
+      mapRef.current.fitBounds(layerRef.current.getBounds(), { padding: [20, 20] });
+    } catch {
+      alert("Map library failed to load. Please check your connection and try again.");
+    }
   }
 
   function handleFillTownsFromPolygon() {
@@ -994,12 +1030,7 @@ export default function App() {
                       <button
                         type="button"
                         onClick={handleParsePolygon}
-                        disabled={!leafletReady}
-                        className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm ${
-                          leafletReady ? "border-neutral-300 bg-white hover:bg-neutral-50"
-                                       : "border-neutral-200 bg-neutral-100 text-neutral-400 cursor-not-allowed"
-                        }`}
-                        title={leafletReady ? "Parse & draw polygon" : "Map library is still loading"}
+                        className="inline-flex items-center gap-2 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm bg-white hover:bg-neutral-50"
                       >
                         <MapPinIcon className="w-4 h-4" />
                         Parse & show
@@ -1333,3 +1364,4 @@ export default function App() {
     </div>
   );
 }
+
