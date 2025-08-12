@@ -367,15 +367,15 @@ const TOWNS: Town[] = [
   { name: "Orillia", lat: 44.6087, lon: -79.419, pop: 33811, prov: "ON" },
   { name: "Owen Sound", lat: 44.5672, lon: -80.943, pop: 21941, prov: "ON" },
   { name: "Collingwood", lat: 44.5001, lon: -80.216, pop: 24911, prov: "ON" },
-  { name: "Stratford", lat: 43.370, lon: -80.981, pop: 33500, prov: "ON" },
+  { name: "Stratford", lat: 43.37, lon: -80.981, pop: 33500, prov: "ON" },
   { name: "Listowel", lat: 43.734, lon: -80.953, pop: 9000, prov: "ON" },
   { name: "Hanover", lat: 44.151, lon: -81.033, pop: 8200, prov: "ON" },
   { name: "Walkerton", lat: 44.132, lon: -81.148, pop: 5000, prov: "ON" },
-  { name: "Goderich", lat: 43.740, lon: -81.713, pop: 7500, prov: "ON" },
-  { name: "Kincardine", lat: 44.180, lon: -81.637, pop: 13000, prov: "ON" },
+  { name: "Goderich", lat: 43.74, lon: -81.713, pop: 7500, prov: "ON" },
+  { name: "Kincardine", lat: 44.18, lon: -81.637, pop: 13000, prov: "ON" },
   { name: "Port Elgin", lat: 44.436, lon: -81.389, pop: 8500, prov: "ON" },
 
-  // AB (starter)
+  // AB
   { name: "Calgary", lat: 51.0447, lon: -114.0719, pop: 1239000, prov: "AB" },
   { name: "Edmonton", lat: 53.5461, lon: -113.4938, pop: 981280, prov: "AB" },
   { name: "Red Deer", lat: 52.2681, lon: -113.8112, pop: 100844, prov: "AB" },
@@ -405,77 +405,47 @@ const TOWNS: Town[] = [
   { name: "Charlottetown", lat: 46.2382, lon: -63.1311, pop: 36094, prov: "PE" },
   { name: "St. John’s", lat: 47.5615, lon: -52.7126, pop: 110525, prov: "NL" },
 
-  // North (starters)
+  // North
   { name: "Whitehorse", lat: 60.7212, lon: -135.0568, pop: 28600, prov: "YT" },
-  { name: "Yellowknife", lat: 62.4540, lon: -114.3718, pop: 20500, prov: "NT" },
-  { name: "Iqaluit", lat: 63.7467, lon: -68.5170, pop: 7740, prov: "NU" },
+  { name: "Yellowknife", lat: 62.454, lon: -114.3718, pop: 20500, prov: "NT" },
+  { name: "Iqaluit", lat: 63.7467, lon: -68.517, pop: 7740, prov: "NU" },
 ];
 
 /* ---------- Geometry helpers ---------- */
-function parsePolygonFromUrl(url: string): LatLng[] | null {
-  try {
-    const decoded = decodeURIComponent(url.trim());
-    const tail = decoded.split("/").pop() || decoded;
-    const pairs = tail.split(",").map(s => s.trim()).filter(Boolean);
-    const coords: LatLng[] = [];
-    for (const pair of pairs) {
-      const parts = pair.split(/\s+/).map(Number).filter((n) => !Number.isNaN(n));
-      if (parts.length < 2) continue;
-      let lat = parts[0], lon = parts[1];
-      if (Math.abs(lat) > 90 && Math.abs(lon) <= 90) [lat, lon] = [lon, lat];
-      coords.push([lat, lon]);
-    }
-    if (coords.length < 3) return null;
-    const first = coords[0], last = coords[coords.length - 1];
-    if (!(Math.abs(first[0] - last[0]) < 1e-9 && Math.abs(first[1] - last[1]) < 1e-9)) {
-      coords.push([first[0], first[1]]);
-    }
-    return coords;
-  } catch {
-    return null;
-  }
-}
-
-// --- Robust parser for IW /custom/... polygon links ---
-// Accepts encoded or plain URLs like:
-// https://instantweather.ca/login/admin/custom/45.084%20-78.098%2C45.326%20-77.386%2C44.898%20-76.877%2C44.769%20-77.962%2C45.084%20-78.098
-// Returns Leaflet-ready [lat, lng][]; trims duplicate closing point.
-function parseCoordsFromUrl(raw: string): [number, number][] {
+/** Robust parser for IW /custom/ polygon links. Accepts encoded/plain URLs. */
+function parseCoordsFromUrl(raw: string): LatLng[] {
   if (!raw) return [];
   let s = raw.trim();
 
-  // decode 1–2 times in case it’s double-encoded
+  // decode up to twice (double-encoded URLs)
   try { s = decodeURIComponent(s); } catch {}
   try { s = decodeURIComponent(s); } catch {}
 
-  // Prefer the substring after "/custom/", otherwise use whole string
-  const after = s.split('/custom/').pop() || s;
+  // Prefer substring after "/custom/"
+  const after = s.split("/custom/").pop() || s;
+  // "45.084 -78.098,45.326 -77.386,..."
+  const tokens = after.split(",").map(t => t.trim()).filter(Boolean);
 
-  // after should look like: "45.084 -78.098,45.326 -77.386,..."
-  const tokens = after.split(',').map(t => t.trim()).filter(Boolean);
-
-  const out: [number, number][] = [];
+  const out: LatLng[] = [];
   for (const tok of tokens) {
-    // grab the first "number number" pair
     const m = tok.match(/-?\d+(?:\.\d+)?\s+-?\d+(?:\.\d+)?/);
     const pair = (m ? m[0] : tok).trim().split(/\s+/);
     if (pair.length !== 2) continue;
-    const lat = parseFloat(pair[0]);
-    const lon = parseFloat(pair[1]);
+    let lat = parseFloat(pair[0]);
+    let lon = parseFloat(pair[1]);
+    // if order seems flipped, swap
+    if (Math.abs(lat) > 90 && Math.abs(lon) <= 90) [lat, lon] = [lon, lat];
     if (Number.isFinite(lat) && Number.isFinite(lon)) out.push([lat, lon]);
   }
 
-  // remove trailing duplicate of the first vertex
+  // remove trailing duplicate of first vertex
   if (out.length >= 2) {
     const [aLat, aLon] = out[0];
     const [bLat, bLon] = out[out.length - 1];
-    if (Math.abs(aLat - bLat) < 1e-6 && Math.abs(aLon - bLon) < 1e-6) {
-      out.pop();
-    }
+    if (Math.abs(aLat - bLat) < 1e-6 && Math.abs(aLon - bLon) < 1e-6) out.pop();
   }
   return out;
 }
-
 
 // Ray-casting point-in-polygon (x=lon, y=lat)
 function pointInPolygon(pt: LatLng, poly: LatLng[]) {
@@ -593,7 +563,7 @@ export default function NotificationGenerator() {
 
   const timestamp = useMemo(() => formatTimestamp(now, tz), [now, tz]);
 
-  /* ---------- Description (fixed: no duplicate consts) ---------- */
+  /* ---------- Description ---------- */
   const description = useMemo(() => {
     const groupInfo = getStormReportGroupInfo(province);
     const reportLine =
@@ -689,7 +659,7 @@ export default function NotificationGenerator() {
           const maxPart = windMax ? `, up to ${windMax} km/h` : "";
           const rep = status.wind === "reported" ? " reported" : " detected";
           const noteW = status.wind === "reported" && reportNotes.wind ? ` (${reportNotes.wind})` : "";
-          return `${classText}${maxPart}${rep}${noteW}`;
+          return `${classText}${maxPart}${noteW}`;
         }
         case "flooding": {
           const classText =
@@ -700,7 +670,7 @@ export default function NotificationGenerator() {
           const maxRain = rainMax ? `, with rainfall totals up to ${rainMax} mm possible` : "";
           const rep = status.flooding === "reported" ? " reported" : " detected";
           const noteF = status.flooding === "reported" && reportNotes.flooding ? ` (${reportNotes.flooding})` : "";
-          return `${classText}${maxRain}${rep}${noteF}`;
+          return `${classText}${maxRain}${noteF}`;
         }
         case "funnel":
           if (value === "reported") {
@@ -726,10 +696,11 @@ export default function NotificationGenerator() {
       (townsText ? ` Areas in the path include ${townsText}.` : "") +
       timeText;
 
+    const primary = ordered[0];
+    const extrasPhrases = ordered.slice(1).map((e) => descFor(e.key as HazardKey, e.opt.value)).filter((s): s is string => Boolean(s));
     const primaryPhrase = primary ? descFor(primary.key as HazardKey, primary.opt.value) : null;
-    const p2 = primaryPhrase ? `Primary threat: ${primaryPhrase}.` : "";
 
-    const extrasPhrases = extras.map((e) => descFor(e.key as HazardKey, e.opt.value)).filter((s): s is string => Boolean(s));
+    const p2 = primaryPhrase ? `Primary threat: ${primaryPhrase}.` : "";
     let p3 = "";
     if (extrasPhrases.length === 1) p3 = `Additional threat: ${extrasPhrases[0]}.`;
     else if (extrasPhrases.length > 1) p3 = `Additional threats: ${extrasPhrases.slice(0,-1).join(", ")} & ${extrasPhrases[extrasPhrases.length-1]}.`;
@@ -743,12 +714,7 @@ export default function NotificationGenerator() {
       } else if (rotationVal === "organized") {
         safetyLines.push("Be prepared to take shelter quickly in an interior room away from windows.", "Delay or reroute travel near the storm until it passes.");
       } else if (rotationVal === "strong") {
-        safetyLines.push(
-          ...(majorPopPath
-            ? ["Take shelter now on the lowest level or an interior room away from windows.", "Protect your head and neck; avoid large open rooms."]
-            : ["Act now: move to an interior room away from windows.", "Avoid windows and large open rooms, and be ready to move to the lowest level if the storm intensifies."]
-          )
-        );
+        safetyLines.push("Act now: move to an interior room away from windows.", "Avoid large open rooms; be ready to move to the lowest level if the storm intensifies.");
       } else if (rotationVal === "intense") {
         safetyLines.push("Take shelter now on the lowest level in a sturdy building.", "Put as many walls between you and the outside as possible; protect your head and neck.");
       }
@@ -783,41 +749,43 @@ export default function NotificationGenerator() {
   const mapRef = useRef<any>(null);
   const layerRef = useRef<any>(null);
 
-  // Initialize/Update Leaflet map when polygon changes
+  // Initialize/update Leaflet map when polygon changes
   useEffect(() => {
     const L = (window as any).L;
-    const mapEl = document.getElementById("iw-poly-map");
-    if (!L || !mapEl) return;
+    const el = document.getElementById("iw-poly-map");
+    if (!L || !el) return;
 
     if (!mapRef.current) {
-      mapRef.current = L.map(mapEl).setView([45, -79], 5);
+      mapRef.current = L.map(el).setView([45, -79], 5);
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: "&copy; OpenStreetMap contributors",
         maxZoom: 18,
       }).addTo(mapRef.current);
     }
-    const map = mapRef.current;
 
+    // clear previous layer
     if (layerRef.current) {
       layerRef.current.remove();
       layerRef.current = null;
     }
 
     if (polyCoords && polyCoords.length >= 3) {
-      layerRef.current = L.polygon(polyCoords, { color: "#2563eb", weight: 3, fillOpacity: 0.15 }).addTo(map);
-      const bounds = L.latLngBounds(polyCoords as any);
-      map.fitBounds(bounds, { padding: [20, 20] });
+      layerRef.current = (window as any).L
+        .polygon(polyCoords, { color: "#2563eb", weight: 3, fillOpacity: 0.15 })
+        .addTo(mapRef.current);
+      const bounds = (window as any).L.latLngBounds(polyCoords as any);
+      mapRef.current.fitBounds(bounds, { padding: [20, 20] });
     }
   }, [polyCoords]);
 
   function handleParsePolygon() {
-    const coords = parsePolygonFromUrl(polyUrl);
-    if (!coords) {
-      alert("Could not parse coordinates from the link. Please check the format.");
+    const pts = parseCoordsFromUrl(polyUrl);
+    if (!pts.length) {
+      alert("Could not find coordinates in that link. Please check the format.");
       setPolyCoords(null);
       return;
     }
-    setPolyCoords(coords);
+    setPolyCoords(pts);
   }
 
   function handleFillTownsFromPolygon() {
@@ -974,7 +942,7 @@ export default function NotificationGenerator() {
                 </div>
               ) : null}
 
-              {/* Polygon tools (optional) */}
+              {/* Polygon tools (storm mode) */}
               {mode === "storm" && (
                 <div className="rounded-xl border border-neutral-200 p-3 bg-neutral-50">
                   <div className="flex items-center gap-2 mb-2">
@@ -991,32 +959,7 @@ export default function NotificationGenerator() {
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
-                        onClick={() => {
-                            const pts = parseCoordsFromUrl(polygonUrl); // polygonUrl = your textbox state
-                            if (!pts.length) {
-                              alert("Could not find coordinates in that link.");
-                              return;
-                            }
-                            if (!mapRef.current) return;
-                          
-                            // remove existing polygon if present
-                            if (polygonLayerRef.current) {
-                              polygonLayerRef.current.remove();
-                              polygonLayerRef.current = null;
-                            }
-                          
-                            // draw new polygon
-                            polygonLayerRef.current = L.polygon(pts, {
-                              color: '#0ea5e9',
-                              weight: 3,
-                              fillOpacity: 0.2,
-                            }).addTo(mapRef.current);
-                          
-                            // fit bounds
-                            const bounds = polygonLayerRef.current.getBounds();
-                            mapRef.current.fitBounds(bounds, { padding: [24, 24] });
-                          }}
-
+                        onClick={handleParsePolygon}
                         className="inline-flex items-center gap-2 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm bg-white hover:bg-neutral-50"
                       >
                         <MapPinIcon className="w-4 h-4" />
@@ -1351,3 +1294,4 @@ export default function NotificationGenerator() {
     </div>
   );
 }
+
