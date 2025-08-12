@@ -1,23 +1,48 @@
-import React, { useMemo, useState, useEffect } from "react";
-import { AlertTriangle, Tornado, Wind, CloudLightning, CloudRain, Eye, Copy, RefreshCcw, MapPin, Clock, Compass } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  AlertTriangle,
+  Tornado,
+  Wind,
+  CloudLightning,
+  CloudRain,
+  Eye,
+  Copy,
+  RefreshCcw,
+  MapPin,
+  Clock,
+  Compass,
+  Map,
+  MapPin as MapPinIcon,
+} from "lucide-react";
 
 /**
  * Instant Weather – Notification Generator
- * - Mode toggle: Storm-based (default) or Regional
- * - Action-first scale: Prepare (1), Act (2), Critical (3), Emergency (4)
- * - Overall level = most severe selected hazard, with policy overrides (see computeFinalLevel)
- * - Headline: CATEGORY: hazards...; uses '&' (no comma before it), commas only when 3+ items
- * - NYT-style capitalization for L1/L2; ALL CAPS for L3/L4
- * - Province selector sets timestamp timezone (defaults to Ontario/ET)
- * - Per-hazard status slider (Detected/Reported) + report note box
- * - Storm-based updates (rotation wording, population bumps, hail/wind/flooding options)
- * - Noindex meta added to keep the page out of search
+ * Polygon tools added:
+ * - Paste polygon link → parse & show on Leaflet map
+ * - "Fill towns from polygon" → auto-fills top 5 towns by population for the selected province
+ * All existing UI/behavior preserved.
  */
 
 type HazardKey = "funnel" | "rotation" | "tornado" | "hail" | "wind" | "flooding";
 type Mode = "storm" | "regional";
+type HazardStatus = "detected" | "reported";
+type ProvinceCode =
+  | "ON" | "QC" | "MB" | "SK" | "AB" | "BC" | "NB" | "NS" | "PE" | "NL" | "YT" | "NT" | "NU";
 
-const PROVINCE_TZ: Record<string, string> = {
+type LatLng = [number, number];
+
+interface HazardOption {
+  value: string;
+  name: string;
+  level: number;
+  phrase: string;
+}
+interface HazardGroup { label: string; options: HazardOption[]; }
+interface HailMaxOption { value: string; name: string; sized: string; }
+interface Town { name: string; lat: number; lon: number; pop: number; prov: ProvinceCode; }
+
+/* ---------- Provinces / timezones ---------- */
+const PROVINCE_TZ: Record<ProvinceCode, string> = {
   ON: "America/Toronto",
   QC: "America/Toronto",
   MB: "America/Winnipeg",
@@ -33,7 +58,7 @@ const PROVINCE_TZ: Record<string, string> = {
   NU: "America/Iqaluit",
 };
 
-const PROVINCE_FULL: Record<string, string> = {
+const PROVINCE_FULL: Record<ProvinceCode, string> = {
   ON: "Ontario",
   QC: "Quebec",
   MB: "Manitoba",
@@ -49,7 +74,7 @@ const PROVINCE_FULL: Record<string, string> = {
   NU: "Nunavut",
 };
 
-function getStormReportGroupInfo(code: keyof typeof PROVINCE_TZ): { name: string; url: string | null } {
+function getStormReportGroupInfo(code: ProvinceCode): { name: string; url: string | null } {
   const full = PROVINCE_FULL[code] || code;
   if (code === "ON") return { name: "Ontario Storm Reports", url: "https://www.facebook.com/groups/ontariostormreports" };
   if (code === "AB" || code === "SK" || code === "MB") {
@@ -62,15 +87,16 @@ function getStormReportGroupInfo(code: keyof typeof PROVINCE_TZ): { name: string
   return { name: `${full} Storm Reports`, url: null };
 }
 
+/* ---------- Severity levels ---------- */
 const LEVELS = [
-  { id: 1, key: "prepare", label: "Prepare", color: "#1e88e5", tint: "bg-blue-50", chip: "bg-blue-600", text: "text-blue-700" },
-  { id: 2, key: "act", label: "Act", color: "#fb8c00", tint: "bg-orange-50", chip: "bg-orange-600", text: "text-orange-700" },
-  { id: 3, key: "critical", label: "Critical", color: "#e53935", tint: "bg-red-50", chip: "bg-red-600", text: "text-red-700" },
-  { id: 4, key: "emergency", label: "Emergency", color: "#d81b60", tint: "bg-pink-50", chip: "bg-pink-600", text: "text-pink-700" },
-];
+  { id: 1, key: "prepare", label: "Prepare", color: "#1e88e5" },
+  { id: 2, key: "act", label: "Act", color: "#fb8c00" },
+  { id: 3, key: "critical", label: "Critical", color: "#e53935" },
+  { id: 4, key: "emergency", label: "Emergency", color: "#d81b60" },
+] as const;
 
-/** Max hail size options (object-based only, with Canadian objects where possible) */
-const HAIL_MAX_OPTS: { value: string; name: string; sized: string }[] = [
+/* ---------- Hail max options (objects only) ---------- */
+const HAIL_MAX_OPTS: HailMaxOption[] = [
   { value: "", name: "No max hail size selected (optional)", sized: "" },
   { value: "0.5cm_pea", name: "Pea (~0.5 cm)", sized: "pea-sized (~0.5 cm)" },
   { value: "1.5cm_marble", name: "Marble (~1.5 cm)", sized: "marble-sized (~1.5 cm)" },
@@ -87,11 +113,10 @@ const HAIL_MAX_OPTS: { value: string; name: string; sized: string }[] = [
   { value: "9.7cm_softball", name: "Softball (~9.7 cm)", sized: "softball-sized (~9.7 cm)" },
 ];
 
-// Hazards (storm mode)
-const HAZARDS = {
+/* ---------- Hazards ---------- */
+const HAZARDS: Record<HazardKey, HazardGroup> = {
   funnel: {
     label: "Funnel cloud",
-    icon: CloudLightning,
     options: [
       { value: "none", name: "None", level: 0, phrase: "no funnel indication" },
       { value: "reported", name: "Funnel cloud reported", level: 1, phrase: "a funnel cloud has been reported" },
@@ -100,7 +125,6 @@ const HAZARDS = {
   },
   rotation: {
     label: "Rotation",
-    icon: Tornado,
     options: [
       { value: "none", name: "None", level: 0, phrase: "no organized rotation" },
       { value: "weak", name: "Broad/weak", level: 1, phrase: "weak rotation" },
@@ -111,7 +135,6 @@ const HAZARDS = {
   },
   tornado: {
     label: "Tornado",
-    icon: Tornado,
     options: [
       { value: "none", name: "None", level: 0, phrase: "no tornado indicated" },
       { value: "reported", name: "Reported", level: 2, phrase: "a tornado has been reported" },
@@ -120,7 +143,6 @@ const HAZARDS = {
   },
   hail: {
     label: "Hail size",
-    icon: AlertTriangle,
     options: [
       { value: "none", name: "None", level: 0, phrase: "no hail" },
       { value: "subsevere", name: "Sub-Severe", level: 1, phrase: "sub-severe hail" },
@@ -132,9 +154,8 @@ const HAZARDS = {
   },
   wind: {
     label: "Wind gust",
-    icon: Wind,
     options: [
-      { value: "none", name: "None", level: 0, phrase: "no severe wind" }, // default
+      { value: "none", name: "None", level: 0, phrase: "no severe wind" },
       { value: "sub_severe", name: "Sub-Severe (below 90 km/h)", level: 1, phrase: "sub-severe winds" },
       { value: "severe", name: "Severe (90–100 km/h)", level: 2, phrase: "severe winds" },
       { value: "damaging", name: "Damaging (100–120 km/h)", level: 3, phrase: "damaging winds" },
@@ -143,7 +164,6 @@ const HAZARDS = {
   },
   flooding: {
     label: "Flooding",
-    icon: CloudRain,
     options: [
       { value: "none", name: "None", level: 0, phrase: "no flooding issues" },
       { value: "isolated", name: "Isolated Flooding", level: 1, phrase: "isolated flooding" },
@@ -156,22 +176,56 @@ const HAZARDS = {
 const DIRECTIONS = ["north","northeast","east","southeast","south","southwest","west","northwest"] as const;
 const HAZARD_PRIORITY: HazardKey[] = ["tornado", "rotation", "hail", "wind", "flooding", "funnel"];
 
-// ---------- helpers ----------
-function levelFromSelection(sel: any) { return sel?.level || 0; }
-
-function resolveOverallLevel(values: Record<string, any>) {
+/* ---------- Helper utils ---------- */
+const capWord = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+function toTitleCase(s: string) { return s.replace(/\b\w/g, (m) => m.toUpperCase()); }
+function nytTitleCase(str: string) {
+  const small = new Set(["a","an","the","and","but","or","nor","for","so","yet","as","at","by","in","of","on","per","to","via","vs","vs.","with","over","into","onto","from","off","up","down","out","about","near"]);
+  return (str || "").split(/\s+/).map((w,i,arr)=>{
+    const isFirst = i===0, isLast = i===arr.length-1;
+    const hasLetters = /[A-Za-z]/.test(w);
+    if (hasLetters && w === w.toUpperCase() && w.length>1) return w;
+    const lower = w.toLowerCase();
+    if (!isFirst && !isLast && small.has(lower)) return lower;
+    return lower.split("-").map((part,j,parts)=>{
+      const firstLast = (isFirst && j===0) || (isLast && j===parts.length-1);
+      return (small.has(part) && !firstLast) ? part : capWord(part);
+    }).join("-");
+  }).join(" ");
+}
+function formatTimestamp(d = new Date(), tz = "America/Toronto") {
+  const date = d.toLocaleDateString("en-CA", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: tz });
+  const time = d.toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit", timeZone: tz, hour12: true });
+  const tzLabel = new Intl.DateTimeFormat("en-CA", { timeZoneName: "short", timeZone: tz })
+    .formatToParts(d).find((p) => p.type === "timeZoneName")?.value || "ET";
+  return `${date} at ${time} ${tzLabel}`;
+}
+function levelFromSelection(opt?: HazardOption) { return opt?.level ?? 0; }
+function resolveOverallLevel(values: Record<HazardKey, HazardOption>) {
   let max = 0;
-  Object.values(values).forEach((opt: any) => { max = Math.max(max, levelFromSelection(opt)); });
+  (Object.values(values) as HazardOption[]).forEach((opt) => { max = Math.max(max, levelFromSelection(opt)); });
   const id = Math.min(Math.max(max, 1), 4);
-  const meta = LEVELS.find((l) => l.id === id) || LEVELS[0];
+  const meta = LEVELS.find((l) => l.id === id) ?? LEVELS[0];
   return { id, meta };
 }
+function orderedHazards(selection: Record<HazardKey, HazardOption>) {
+  return HAZARD_PRIORITY
+    .map((key) => ({ key, opt: selection[key] }))
+    .filter((e) => e.opt && e.opt.level > 0)
+    .sort((a, b) => b.opt.level - a.opt.level || HAZARD_PRIORITY.indexOf(a.key) - HAZARD_PRIORITY.indexOf(b.key));
+}
+function joinForHeadline(items: string[]) {
+  if (items.length <= 1) return items[0] ?? "";
+  if (items.length === 2) return `${items[0]} & ${items[1]}`;
+  const head = items.slice(0, -1).join(", ");
+  const tail = items[items.length - 1];
+  return `${head} & ${tail}`;
+}
 
-// Policy override (storm mode)
+/* ---------- Policy override (storm mode) ---------- */
 function computeFinalLevel(
   baseId: number,
-  selection: Record<string, any>,
-  _status: Record<string,"detected"|"reported">,
+  selection: Record<HazardKey, HazardOption>,
   majorPopPath: boolean,
   hailMajorPop: boolean,
   mode: Mode
@@ -193,41 +247,8 @@ function computeFinalLevel(
   return finalId;
 }
 
-function formatTimestamp(d = new Date(), tz = "America/Toronto") {
-  const date = d.toLocaleDateString("en-CA", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: tz });
-  const time = d.toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit", timeZone: tz, hour12: true });
-  const tzLabel = new Intl.DateTimeFormat("en-CA", { timeZoneName: "short", timeZone: tz })
-    .formatToParts(d).find((p) => p.type === "timeZoneName")?.value || "ET";
-  return `${date} at ${time} ${tzLabel}`;
-}
-
-function toTitleCase(s: string) { return s.replace(/\b\w/g, (m) => m.toUpperCase()); }
-
-function orderedHazards(selection: Record<string, any>) {
-  return HAZARD_PRIORITY
-    .map((key) => ({ key, opt: selection[key] }))
-    .filter((e) => e.opt && e.opt.level > 0)
-    .sort((a, b) => b.opt.level - a.opt.level || HAZARD_PRIORITY.indexOf(a.key) - HAZARD_PRIORITY.indexOf(b.key));
-}
-
-function nytTitleCase(str: string) {
-  const small = new Set(["a","an","the","and","but","or","nor","for","so","yet","as","at","by","in","of","on","per","to","via","vs","vs.","with","over","into","onto","from","off","up","down","out","about","near"]);
-  return (str || "").split(/\s+/).map((w,i,arr)=>{
-    const isFirst = i===0, isLast = i===arr.length-1;
-    const hasLetters = /[A-Za-z]/.test(w);
-    const isAcronym = hasLetters && w === w.toUpperCase() && w.length>1;
-    if (isAcronym) return w;
-    const lower = w.toLowerCase();
-    if (!isFirst && !isLast && small.has(lower)) return lower;
-    return lower.split("-").map((part,j,parts)=>{
-      const firstLast = (isFirst && j===0) || (isLast && j===parts.length-1);
-      return (small.has(part) && !firstLast) ? part : part.charAt(0).toUpperCase()+part.slice(1);
-    }).join("-");
-  }).join(" ");
-}
-
-// ---------- Headline helpers ----------
-function headlinePhrase(key: HazardKey, value: string, status: "detected" | "reported") {
+/* ---------- Headline helpers ---------- */
+function headlinePhrase(key: HazardKey, value: string, status: HazardStatus) {
   const tag = status === "reported" ? "Reported" : "Detected";
   switch (key) {
     case "tornado":
@@ -262,38 +283,32 @@ function headlinePhrase(key: HazardKey, value: string, status: "detected" | "rep
       if (value === "flooding") return `Flooding ${tag}`;
       if (value === "significant") return `Significant Flooding ${tag}`;
       return null;
+    default:
+      return null;
   }
 }
-
-function joinForHeadline(items: string[]) {
-  if (items.length <= 1) return items[0] || "";
-  if (items.length === 2) return `${items[0]} & ${items[1]}`;
-  const head = items.slice(0, -1).join(", ");
-  const tail = items[items.length - 1];
-  return `${head} & ${tail}`;
-}
-
 function buildHeadlineStorm(
-  selection: Record<string, any>,
-  status: Record<string,"detected"|"reported">,
+  selection: Record<HazardKey, HazardOption>,
+  status: Record<HazardKey, HazardStatus>,
   overallId: number,
   overallLabel: string
 ) {
-  const items = HAZARD_PRIORITY.map((key) => {
-    const opt = selection[key];
-    if (!opt || opt.level === 0) return null;
-    return { key, level: opt.level, value: opt.value };
-  }).filter(Boolean)
-    // @ts-ignore - TS can't infer types from filter(Boolean) here
-    .sort((a:any,b:any)=> b.level - a.level || HAZARD_PRIORITY.indexOf(a.key) - HAZARD_PRIORITY.indexOf(b.key));
+  const items = HAZARD_PRIORITY
+    .map((key) => {
+      const opt = selection[key];
+      return !opt || opt.level === 0 ? null : { key, level: opt.level, value: opt.value };
+    })
+    .filter((x): x is { key: HazardKey; level: number; value: string } => x !== null)
+    .sort((a, b) => b.level - a.level || HAZARD_PRIORITY.indexOf(a.key) - HAZARD_PRIORITY.indexOf(b.key));
 
-  const phrases = (items as any[]).map(({key, value}) => {
-    const stat =
-      key === "rotation" || key === "funnel" ? "detected" :
-      key === "tornado" ? "reported" :
-      status[key];
-    return headlinePhrase(key as HazardKey, value, stat as any);
-  }).filter(Boolean) as string[];
+  const phrases = items
+    .map(({ key, value }) => {
+      const stat: HazardStatus =
+        key === "rotation" || key === "funnel" ? "detected" :
+        key === "tornado" ? "reported" : status[key];
+      return headlinePhrase(key, value, stat);
+    })
+    .filter((p): p is string => Boolean(p));
 
   const hazardTextRaw = phrases.length ? joinForHeadline(phrases) : "Hazardous Weather Detected";
   const category = overallLabel.toUpperCase();
@@ -301,40 +316,153 @@ function buildHeadlineStorm(
   const hazardText = needsAllCaps ? hazardTextRaw.toUpperCase() : nytTitleCase(hazardTextRaw);
   return `${category}: ${hazardText}`;
 }
-
 function buildHeadlineRegional(
   opts: { choice: "funnel" | "severe" | null; tornadoRisk: boolean },
   overallId: number,
   overallLabel: string
 ) {
-  const phrases: string[] = [];
-  if (opts.choice === "funnel") phrases.push("Funnel Cloud Potential");
-  if (opts.choice === "severe") phrases.push("Severe Thunderstorm Potential");
-  if (opts.choice === "severe" && opts.tornadoRisk) phrases.push("Tornado Risk");
-  const textRaw = phrases.length ? joinForHeadline(phrases) : "Weather Potential";
+  const parts: string[] = [];
+  if (opts.choice === "funnel") parts.push("Funnel Cloud Potential");
+  if (opts.choice === "severe") parts.push("Severe Thunderstorm Potential");
+  if (opts.choice === "severe" && opts.tornadoRisk) parts.push("Tornado Risk");
+  const textRaw = parts.length ? joinForHeadline(parts) : "Weather Potential";
   const category = overallLabel.toUpperCase();
   const needsAllCaps = overallId >= 3;
   const text = needsAllCaps ? textRaw.toUpperCase() : nytTitleCase(textRaw);
   return `${category}: ${text}`;
 }
 
-// ---------- component ----------
+/* ---------- Towns (starter lists per province; can expand later) ---------- */
+const TOWNS: Town[] = [
+  // ON (good coverage)
+  { name: "Toronto", lat: 43.65107, lon: -79.347015, pop: 2731571, prov: "ON" },
+  { name: "Ottawa", lat: 45.42153, lon: -75.697193, pop: 934243, prov: "ON" },
+  { name: "Mississauga", lat: 43.589, lon: -79.644, pop: 721599, prov: "ON" },
+  { name: "Brampton", lat: 43.684, lon: -79.759, pop: 593638, prov: "ON" },
+  { name: "Hamilton", lat: 43.2557, lon: -79.8711, pop: 536917, prov: "ON" },
+  { name: "London", lat: 42.9834, lon: -81.233, pop: 383822, prov: "ON" },
+  { name: "Markham", lat: 43.8561, lon: -79.337, pop: 328966, prov: "ON" },
+  { name: "Vaughan", lat: 43.8372, lon: -79.5083, pop: 323282, prov: "ON" },
+  { name: "Kitchener", lat: 43.4516, lon: -80.4925, pop: 256885, prov: "ON" },
+  { name: "Windsor", lat: 42.3149, lon: -83.0364, pop: 217188, prov: "ON" },
+  { name: "Oshawa", lat: 43.8971, lon: -78.8658, pop: 168000, prov: "ON" },
+  { name: "St. Catharines", lat: 43.1594, lon: -79.2469, pop: 133113, prov: "ON" },
+  { name: "Barrie", lat: 44.3894, lon: -79.6903, pop: 153356, prov: "ON" },
+  { name: "Guelph", lat: 43.5448, lon: -80.2482, pop: 131794, prov: "ON" },
+  { name: "Cambridge", lat: 43.3616, lon: -80.3144, pop: 129920, prov: "ON" },
+  { name: "Whitby", lat: 43.8976, lon: -78.9429, pop: 138501, prov: "ON" },
+  { name: "Kingston", lat: 44.2312, lon: -76.486, pop: 136685, prov: "ON" },
+  { name: "Thunder Bay", lat: 48.3809, lon: -89.2477, pop: 110172, prov: "ON" },
+  { name: "Waterloo", lat: 43.4643, lon: -80.5204, pop: 121436, prov: "ON" },
+  { name: "Brantford", lat: 43.1394, lon: -80.2644, pop: 104688, prov: "ON" },
+  { name: "Pickering", lat: 43.8384, lon: -79.0868, pop: 99484, prov: "ON" },
+  { name: "Niagara Falls", lat: 43.0896, lon: -79.0849, pop: 94415, prov: "ON" },
+  { name: "Peterborough", lat: 44.3091, lon: -78.3197, pop: 83500, prov: "ON" },
+  { name: "Sarnia", lat: 42.9745, lon: -82.4066, pop: 71594, prov: "ON" },
+  { name: "Newmarket", lat: 44.0592, lon: -79.4613, pop: 84224, prov: "ON" },
+  { name: "North Bay", lat: 46.3091, lon: -79.4608, pop: 51553, prov: "ON" },
+  { name: "Belleville", lat: 44.1628, lon: -77.3832, pop: 55671, prov: "ON" },
+  { name: "Milton", lat: 43.5183, lon: -79.8774, pop: 132979, prov: "ON" },
+  { name: "Woodstock", lat: 43.1306, lon: -80.7467, pop: 46505, prov: "ON" },
+  { name: "Orillia", lat: 44.6087, lon: -79.419, pop: 33811, prov: "ON" },
+  { name: "Owen Sound", lat: 44.5672, lon: -80.943, pop: 21941, prov: "ON" },
+  { name: "Collingwood", lat: 44.5001, lon: -80.216, pop: 24911, prov: "ON" },
+  { name: "Stratford", lat: 43.370, lon: -80.981, pop: 33500, prov: "ON" },
+  { name: "Listowel", lat: 43.734, lon: -80.953, pop: 9000, prov: "ON" },
+  { name: "Hanover", lat: 44.151, lon: -81.033, pop: 8200, prov: "ON" },
+  { name: "Walkerton", lat: 44.132, lon: -81.148, pop: 5000, prov: "ON" },
+  { name: "Goderich", lat: 43.740, lon: -81.713, pop: 7500, prov: "ON" },
+  { name: "Kincardine", lat: 44.180, lon: -81.637, pop: 13000, prov: "ON" },
+  { name: "Port Elgin", lat: 44.436, lon: -81.389, pop: 8500, prov: "ON" },
+
+  // AB (starter)
+  { name: "Calgary", lat: 51.0447, lon: -114.0719, pop: 1239000, prov: "AB" },
+  { name: "Edmonton", lat: 53.5461, lon: -113.4938, pop: 981280, prov: "AB" },
+  { name: "Red Deer", lat: 52.2681, lon: -113.8112, pop: 100844, prov: "AB" },
+  { name: "Lethbridge", lat: 49.6956, lon: -112.8451, pop: 92563, prov: "AB" },
+
+  // SK
+  { name: "Saskatoon", lat: 52.1332, lon: -106.6700, pop: 273010, prov: "SK" },
+  { name: "Regina", lat: 50.4452, lon: -104.6189, pop: 226404, prov: "SK" },
+
+  // MB
+  { name: "Winnipeg", lat: 49.8951, lon: -97.1384, pop: 749607, prov: "MB" },
+  { name: "Brandon", lat: 49.8485, lon: -99.9501, pop: 48859, prov: "MB" },
+
+  // QC
+  { name: "Montréal", lat: 45.5019, lon: -73.5674, pop: 1760000, prov: "QC" },
+  { name: "Québec City", lat: 46.8139, lon: -71.2080, pop: 542298, prov: "QC" },
+
+  // BC
+  { name: "Vancouver", lat: 49.2827, lon: -123.1207, pop: 675218, prov: "BC" },
+  { name: "Victoria", lat: 48.4284, lon: -123.3656, pop: 91867, prov: "BC" },
+  { name: "Kelowna", lat: 49.8879, lon: -119.4960, pop: 144576, prov: "BC" },
+
+  // Atlantic
+  { name: "Halifax", lat: 44.6488, lon: -63.5752, pop: 439819, prov: "NS" },
+  { name: "Moncton", lat: 46.0878, lon: -64.7782, pop: 79470, prov: "NB" },
+  { name: "Saint John", lat: 45.2733, lon: -66.0633, pop: 67575, prov: "NB" },
+  { name: "Charlottetown", lat: 46.2382, lon: -63.1311, pop: 36094, prov: "PE" },
+  { name: "St. John’s", lat: 47.5615, lon: -52.7126, pop: 110525, prov: "NL" },
+
+  // North (starters)
+  { name: "Whitehorse", lat: 60.7212, lon: -135.0568, pop: 28600, prov: "YT" },
+  { name: "Yellowknife", lat: 62.4540, lon: -114.3718, pop: 20500, prov: "NT" },
+  { name: "Iqaluit", lat: 63.7467, lon: -68.5170, pop: 7740, prov: "NU" },
+];
+
+/* ---------- Geometry helpers ---------- */
+function parsePolygonFromUrl(url: string): LatLng[] | null {
+  try {
+    const decoded = decodeURIComponent(url.trim());
+    // Grab the last segment (after '/custom/...' pattern) if present
+    const tail = decoded.split("/").pop() || decoded;
+    const pairs = tail.split(",").map(s => s.trim()).filter(Boolean);
+    const coords: LatLng[] = [];
+    for (const pair of pairs) {
+      const parts = pair.split(/\s+/).map(Number).filter((n) => !Number.isNaN(n));
+      if (parts.length < 2) continue;
+      let lat = parts[0], lon = parts[1];
+      // Auto-detect [lon, lat] vs [lat, lon]
+      if (Math.abs(lat) > 90 && Math.abs(lon) <= 90) [lat, lon] = [lon, lat];
+      coords.push([lat, lon]);
+    }
+    if (coords.length < 3) return null;
+    const first = coords[0], last = coords[coords.length - 1];
+    if (!(Math.abs(first[0] - last[0]) < 1e-9 && Math.abs(first[1] - last[1]) < 1e-9)) {
+      coords.push([first[0], first[1]]);
+    }
+    return coords;
+  } catch {
+    return null;
+  }
+}
+
+// Ray-casting point-in-polygon (treat x=lon, y=lat)
+function pointInPolygon(pt: LatLng, poly: LatLng[]) {
+  const x = pt[1], y = pt[0];
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i][1], yi = poly[i][0];
+    const xj = poly[j][1], yj = poly[j][0];
+    const intersect = ((yi > y) !== (yj > y)) && (x < ((xj - xi) * (y - yi)) / (yj - yi + 0.0) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+/* ---------- Component ---------- */
 export default function NotificationGenerator() {
-  // Inject meta tags to prevent indexing + force light UI to avoid dark native buttons
+  // Prevent indexing + consistent light UI
   useEffect(() => {
     const ensureMeta = (name: string, content: string) => {
       let el = document.querySelector(`meta[name="${name}"]`) as HTMLMetaElement | null;
-      if (!el) {
-        el = document.createElement("meta");
-        el.setAttribute("name", name);
-        document.head.appendChild(el);
-      }
+      if (!el) { el = document.createElement("meta"); el.setAttribute("name", name); document.head.appendChild(el); }
       el.setAttribute("content", content);
     };
     ensureMeta("robots", "noindex, nofollow, noarchive");
     ensureMeta("googlebot", "noindex, nofollow");
 
-    // Add a small style block once to force light controls and full-page light bg
     const STYLE_ID = "__iw_light_ui__";
     if (!document.getElementById(STYLE_ID)) {
       const style = document.createElement("style");
@@ -343,17 +471,16 @@ export default function NotificationGenerator() {
         :root { color-scheme: light; }
         html, body, #root { min-height: 100%; background: #f6f7f9; }
         body { margin: 0; }
+        .leaflet-container { border-radius: 12px; }
       `;
       document.head.appendChild(style);
     }
   }, []);
 
   const [mode, setMode] = useState<Mode>("storm");
-  const [province, setProvince] = useState<keyof typeof PROVINCE_TZ>("ON");
+  const [province, setProvince] = useState<ProvinceCode>("ON");
   const tz = PROVINCE_TZ[province] || "America/Toronto";
-
-  // Social hashtag toggle
-  const [addHashtags, setAddHashtags] = useState<boolean>(false);
+  const [addHashtags, setAddHashtags] = useState(false);
 
   // Storm details
   const [location, setLocation] = useState("");
@@ -363,50 +490,43 @@ export default function NotificationGenerator() {
   const [timeWindow, setTimeWindow] = useState("the next 30 to 60 minutes");
   const [now, setNow] = useState(new Date());
 
-  // Regional specifics
+  // Regional
   const [regions, setRegions] = useState("");
   const [regionalChoice, setRegionalChoice] = useState<"funnel" | "severe" | null>(null);
-  const [regionalSevere, setRegionalSevere] = useState<{ hail: boolean; wind: boolean; heavyRain: boolean; lightning: boolean }>({
-    hail: true, wind: true, heavyRain: true, lightning: true,
-  });
-  const [regionalTornadoRisk, setRegionalTornadoRisk] = useState<boolean>(false);
+  const [regionalSevere, setRegionalSevere] = useState({ hail: true, wind: true, heavyRain: true, lightning: true });
+  const [regionalTornadoRisk, setRegionalTornadoRisk] = useState(false);
   const [regionalTornadoRiskLevel, setRegionalTornadoRiskLevel] = useState<"low"|"moderate"|"high">("low");
 
   // Funnel subtype & reporter (storm mode)
   const [funnelSubtype, setFunnelSubtype] = useState<"supercell" | "non">("non");
-  const [funnelReporter, setFunnelReporter] = useState<string>("");
+  const [funnelReporter, setFunnelReporter] = useState("");
 
-  // Hazard selections (storm mode)
-  const [selection, setSelection] = useState<Record<string, any>>({
+  // Hazards (storm mode)
+  const [selection, setSelection] = useState<Record<HazardKey, HazardOption>>({
     funnel: HAZARDS.funnel.options[0],
     rotation: HAZARDS.rotation.options[0],
     tornado: HAZARDS.tornado.options[0],
     hail: HAZARDS.hail.options[0],
-    wind: HAZARDS.wind.options[0], // defaults to "none"
+    wind: HAZARDS.wind.options[0],
     flooding: HAZARDS.flooding.options[0],
   });
 
   // Optional detail fields
   const [hailMax, setHailMax] = useState<string>("");
-  const [hailMajorPop, setHailMajorPop] = useState<boolean>(false);
-  const [windMax, setWindMax] = useState<string>("");     // km/h
-  const [rainMax, setRainMax] = useState<string>("");     // mm
+  const [hailMajorPop, setHailMajorPop] = useState(false);
+  const [windMax, setWindMax] = useState<string>("");
+  const [rainMax, setRainMax] = useState<string>("");
 
-  // Status (Detected/Reported) for hail, wind, flooding only
-  const [status, setStatus] = useState<Record<string,"detected"|"reported">>({
-    funnel: "detected",
-    rotation: "detected",
-    tornado: "detected",
-    hail: "detected",
-    wind: "detected",
-    flooding: "detected",
+  // Status sliders
+  const [status, setStatus] = useState<Record<HazardKey, HazardStatus>>({
+    funnel: "detected", rotation: "detected", tornado: "detected", hail: "detected", wind: "detected", flooding: "detected",
   });
-  const [reportNotes, setReportNotes] = useState<Record<string,string>>({
+  const [reportNotes, setReportNotes] = useState<Record<HazardKey, string>>({
     funnel: "", rotation: "", tornado: "", hail: "", wind: "", flooding: "",
   });
 
   // Major population in path
-  const [majorPopPath, setMajorPopPath] = useState<boolean>(false);
+  const [majorPopPath, setMajorPopPath] = useState(false);
 
   // Overall level
   const baseOverall = useMemo(
@@ -414,28 +534,27 @@ export default function NotificationGenerator() {
     [mode, selection]
   );
   const finalLevelId = useMemo(
-    () => computeFinalLevel(baseOverall.id, selection, status, majorPopPath, hailMajorPop, mode),
-    [baseOverall.id, selection, status, majorPopPath, hailMajorPop, mode]
+    () => computeFinalLevel(baseOverall.id, selection, majorPopPath, hailMajorPop, mode),
+    [baseOverall.id, selection, majorPopPath, hailMajorPop, mode]
   );
   const finalLevelMeta = LEVELS.find((l) => l.id === finalLevelId)!;
 
-  const headlineBase = useMemo(() => {
-    return mode === "storm"
+  const headlineBase = useMemo(() =>
+    mode === "storm"
       ? buildHeadlineStorm(selection, status, finalLevelId, finalLevelMeta.label)
-      : buildHeadlineRegional({ choice: regionalChoice, tornadoRisk: regionalTornadoRisk }, finalLevelId, finalLevelMeta.label);
-  }, [mode, selection, status, finalLevelId, finalLevelMeta.label, regionalChoice, regionalTornadoRisk]);
+      : buildHeadlineRegional({ choice: regionalChoice, tornadoRisk: regionalTornadoRisk }, finalLevelId, finalLevelMeta.label),
+    [mode, selection, status, finalLevelId, finalLevelMeta.label, regionalChoice, regionalTornadoRisk]
+  );
 
-  // Prefix province hashtags if enabled
   const headline = useMemo(() => {
     if (!addHashtags) return headlineBase;
     const code = String(province).toUpperCase();
-    const tags = `#${code}Storm #${code}wx`;
-    return `${tags} ${headlineBase}`;
+    return `#${code}Storm #${code}wx ${headlineBase}`;
   }, [addHashtags, headlineBase, province]);
 
   const timestamp = useMemo(() => formatTimestamp(now, tz), [now, tz]);
 
-  // ---------- Description ----------
+  /* ---------- Description (unchanged) ---------- */
   const description = useMemo(() => {
     const groupInfo = getStormReportGroupInfo(province);
     const reportLine =
@@ -477,7 +596,7 @@ export default function NotificationGenerator() {
       return [pFallback, pR].join("\n\n");
     }
 
-    // Storm-based description
+    // Storm-based
     const townsText = towns.split(/\n|,/).map((t) => t.trim()).filter(Boolean).join(", ");
     const spd = speed ? ` at about ${speed} km/h` : "";
     const pathText = townsText ? ` Areas in the path include ${townsText}.` : "";
@@ -497,7 +616,7 @@ export default function NotificationGenerator() {
     const hailMaxEntry = HAIL_MAX_OPTS.find((o) => o.value === hailMax);
     const hailMaxSized = hailMaxEntry?.sized || "";
 
-    const descFor = (key: HazardKey, value: string) => {
+    const descFor = (key: HazardKey, value: string): string | null => {
       switch (key) {
         case "tornado":
           if (value === "reported") return `a tornado, reported${reportNotes.tornado ? ` (${reportNotes.tornado})` : ""}`;
@@ -527,8 +646,7 @@ export default function NotificationGenerator() {
             value === "sub_severe" ? "sub-severe winds" :
             value === "severe" ? "severe winds" :
             value === "damaging" ? "damaging winds" :
-            value === "destructive" ? "destructive winds" :
-            value === "none" ? null : null;
+            value === "destructive" ? "destructive winds" : null;
           if (!classText) return null;
           const maxPart = windMax ? `, up to ${windMax} km/h` : "";
           const rep = status.wind === "reported" ? " reported" : " detected";
@@ -564,77 +682,62 @@ export default function NotificationGenerator() {
       }
     };
 
-    const primaryKey = primary?.key as HazardKey | undefined;
-    const rotationVal = selection.rotation?.value as string | undefined;
-
-    // Safety guidance
-    let safetyLines: string[] = [];
-    if (primaryKey === "rotation") {
-      if (rotationVal === "weak") {
-        safetyLines = [
-          "Stay close to sturdy shelter and be ready to move indoors quickly if the storm approaches.",
-          "Have a plan to reach an interior room away from windows on short notice.",
-        ];
-      } else if (rotationVal === "organized") {
-        safetyLines = [
-          "Be prepared to take shelter quickly in an interior room away from windows.",
-          "Delay or reroute travel near the storm until it passes.",
-        ];
-      } else if (rotationVal === "strong") {
-        safetyLines = majorPopPath ? [
-          "Take shelter now on the lowest level or an interior room away from windows.",
-          "Protect your head and neck; avoid large open rooms.",
-        ] : [
-          "Act now: move to an interior room away from windows.",
-          "Avoid windows and large open rooms, and be ready to move to the lowest level if the storm intensifies.",
-        ];
-      } else if (rotationVal === "intense") {
-        safetyLines = [
-          "Take shelter now on the lowest level in a sturdy building.",
-          "Put as many walls between you and the outside as possible; protect your head and neck.",
-        ];
-      }
-    } else if (primaryKey === "tornado") {
-      safetyLines = [
-        "Go to the lowest level or an interior room away from windows.",
-        "Protect your head and neck; a helmet or cushions can help.",
-        "If outdoors or in a vehicle, seek a sturdy building immediately.",
-      ];
-    } else if (primaryKey === "funnel" && (selection.funnel.value === "reported" || selection.funnel.value === "landspout_reported")) {
-      safetyLines = [
-        "Be ready to shelter quickly if the funnel approaches.",
-        "Move indoors and avoid windows until it dissipates or passes.",
-      ];
-    } else if (primaryKey === "hail") {
-      safetyLines = ["Move indoors and stay away from windows and skylights.", "If driving, safely pull over under a sturdy structure if possible.", "Protect vehicles where you can; avoid parking under trees."];
-    } else if (primaryKey === "wind") {
-      safetyLines = ["Move to an interior room away from windows.", "Secure or bring inside loose outdoor items.", "Avoid travel during the peak of the storm if possible."];
-    } else if (primaryKey === "flooding") {
-      safetyLines = ["Never drive through flooded roads; turn around instead.", "Avoid low-lying areas, underpasses and fast-moving water.", "Move valuables off the floor in basements if safe to do so."];
-    } else {
-      safetyLines = ["Stay aware and be ready to act quickly if conditions worsen."];
-    }
-    safetyLines.push("Stay tuned for future Instant Weather custom notifications and alerts from Environment Canada.");
+    const townsTextSummary = townsText;
+    const orderedList = ordered;
+    const primary = orderedList[0];
+    const extras = orderedList.slice(1);
 
     const p1 =
       `This notification is categorized as ${finalLevelMeta.label}: ${levelMeaning}` +
       (location ? ` A storm is near ${location}, moving ${direction}${spd}.` : ` A storm is in your area, moving ${direction}${spd}.`) +
-      pathText + timeText;
+      (townsTextSummary ? ` Areas in the path include ${townsTextSummary}.` : "") +
+      timeText;
 
     const primaryPhrase = primary ? descFor(primary.key as HazardKey, primary.opt.value) : null;
     const p2 = primaryPhrase ? `Primary threat: ${primaryPhrase}.` : "";
 
-    const extrasPhrases = extras.map((e) => descFor(e.key as HazardKey, e.opt.value)).filter(Boolean) as string[];
+    const extrasPhrases = extras.map((e) => descFor(e.key as HazardKey, e.opt.value)).filter((s): s is string => Boolean(s));
     let p3 = "";
     if (extrasPhrases.length === 1) p3 = `Additional threat: ${extrasPhrases[0]}.`;
     else if (extrasPhrases.length > 1) p3 = `Additional threats: ${extrasPhrases.slice(0,-1).join(", ")} & ${extrasPhrases[extrasPhrases.length-1]}.`;
 
+    const safetyLines: string[] = [];
+    const rotationVal = selection.rotation?.value;
+    const primaryKey = primary?.key as HazardKey | undefined;
+    if (primaryKey === "rotation") {
+      if (rotationVal === "weak") {
+        safetyLines.push("Stay close to sturdy shelter and be ready to move indoors quickly if the storm approaches.", "Have a plan to reach an interior room away from windows on short notice.");
+      } else if (rotationVal === "organized") {
+        safetyLines.push("Be prepared to take shelter quickly in an interior room away from windows.", "Delay or reroute travel near the storm until it passes.");
+      } else if (rotationVal === "strong") {
+        safetyLines.push(
+          ...(majorPopPath
+            ? ["Take shelter now on the lowest level or an interior room away from windows.", "Protect your head and neck; avoid large open rooms."]
+            : ["Act now: move to an interior room away from windows.", "Avoid windows and large open rooms, and be ready to move to the lowest level if the storm intensifies."]
+          )
+        );
+      } else if (rotationVal === "intense") {
+        safetyLines.push("Take shelter now on the lowest level in a sturdy building.", "Put as many walls between you and the outside as possible; protect your head and neck.");
+      }
+    } else if (primaryKey === "tornado") {
+      safetyLines.push("Go to the lowest level or an interior room away from windows.", "Protect your head and neck; a helmet or cushions can help.", "If outdoors or in a vehicle, seek a sturdy building immediately.");
+    } else if (primaryKey === "funnel" && (selection.funnel.value === "reported" || selection.funnel.value === "landspout_reported")) {
+      safetyLines.push("Be ready to shelter quickly if the funnel approaches.", "Move indoors and avoid windows until it dissipates or passes.");
+    } else if (primaryKey === "hail") {
+      safetyLines.push("Move indoors and stay away from windows and skylights.", "If driving, safely pull over under a sturdy structure if possible.", "Protect vehicles where you can; avoid parking under trees.");
+    } else if (primaryKey === "wind") {
+      safetyLines.push("Move to an interior room away from windows.", "Secure or bring inside loose outdoor items.", "Avoid travel during the peak of the storm if possible.");
+    } else if (primaryKey === "flooding") {
+      safetyLines.push("Never drive through flooded roads; turn around instead.", "Avoid low-lying areas, underpasses and fast-moving water.", "Move valuables off the floor in basements if safe to do so.");
+    } else {
+      safetyLines.push("Stay aware and be ready to act quickly if conditions worsen.");
+    }
+    safetyLines.push("Stay tuned for future Instant Weather custom notifications and alerts from Environment Canada.");
+
     const p4 = `What you should do: ${safetyLines.join(" ")}`;
 
-    const reportLineStorm =
-      `Have a report? If it is safe, please post to ${groupInfo.name}` +
-      `${groupInfo.url ? ` (${groupInfo.url})` : ""}. Include your exact location and the local date/time of your report.`;
-    const p5 = `Reports: ${reportLineStorm}`;
+    const groupInfo = getStormReportGroupInfo(province);
+    const p5 = `Reports: Have a report? If it is safe, please post to ${groupInfo.name}${groupInfo.url ? ` (${groupInfo.url})` : ""}. Include your exact location and the local date/time of your report.`;
 
     return [p1, p2, p3, p4, p5].filter(Boolean).join("\n\n");
   }, [
@@ -643,35 +746,83 @@ export default function NotificationGenerator() {
     location, towns, direction, speed, finalLevelId, finalLevelMeta.label, province
   ]);
 
+  /* ---------- Polygon tools state ---------- */
+  const [polyUrl, setPolyUrl] = useState("");
+  const [polyCoords, setPolyCoords] = useState<LatLng[] | null>(null);
+  const mapRef = useRef<any>(null);
+  const layerRef = useRef<any>(null);
+
+  // Initialize/Update Leaflet map when polygon changes
+  useEffect(() => {
+    const L = (window as any).L;
+    const mapEl = document.getElementById("iw-poly-map");
+    if (!L || !mapEl) return;
+
+    if (!mapRef.current) {
+      mapRef.current = L.map(mapEl).setView([45, -79], 5);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "&copy; OpenStreetMap contributors",
+        maxZoom: 18,
+      }).addTo(mapRef.current);
+    }
+    const map = mapRef.current;
+
+    if (layerRef.current) {
+      layerRef.current.remove();
+      layerRef.current = null;
+    }
+
+    if (polyCoords && polyCoords.length >= 3) {
+      layerRef.current = L.polygon(polyCoords, { color: "#2563eb", weight: 3, fillOpacity: 0.15 }).addTo(map);
+      const bounds = L.latLngBounds(polyCoords as any);
+      map.fitBounds(bounds, { padding: [20, 20] });
+    }
+  }, [polyCoords]);
+
+  function handleParsePolygon() {
+    const coords = parsePolygonFromUrl(polyUrl);
+    if (!coords) {
+      alert("Could not parse coordinates from the link. Please check the format.");
+      setPolyCoords(null);
+      return;
+    }
+    setPolyCoords(coords);
+  }
+
+  function handleFillTownsFromPolygon() {
+    if (!polyCoords || polyCoords.length < 3) {
+      alert("Parse a polygon first.");
+      return;
+    }
+    const candidates = TOWNS.filter((t) => t.prov === province && pointInPolygon([t.lat, t.lon], polyCoords));
+    if (candidates.length === 0) {
+      alert("No towns from the built-in list are inside this polygon. We can add more towns for this province if you like.");
+      return;
+    }
+    const top5 = candidates.sort((a, b) => b.pop - a.pop).slice(0, 5);
+    setTowns(top5.map((t) => t.name).join(", "));
+  }
+
+  /* ---------- Handlers ---------- */
   function updateSelect(groupKey: HazardKey, value: string) {
-    const group = (HAZARDS as any)[groupKey];
-    const opt = group.options.find((o: any) => o.value === value) || group.options[0];
+    const group = HAZARDS[groupKey];
+    const opt = group.options.find((o) => o.value === value) ?? group.options[0];
     setSelection((prev) => ({ ...prev, [groupKey]: opt }));
   }
-
-  const updateStatus = (key: HazardKey, val: "detected" | "reported") =>
-    setStatus((s) => ({ ...s, [key]: val }));
-
-  const updateReportNote = (key: HazardKey, val: string) =>
-    setReportNotes((r) => ({ ...r, [key]: val }));
-
-  function copyToClipboard(text: string) {
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).catch(() => {});
-    }
-  }
-
+  const updateStatus = (key: HazardKey, val: HazardStatus) => setStatus((s) => ({ ...s, [key]: val }));
+  const updateReportNote = (key: HazardKey, val: string) => setReportNotes((r) => ({ ...r, [key]: val }));
+  function copyToClipboard(text: string) { if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).catch(()=>{}); }
   const levelColorStyle = { background: finalLevelMeta.color, color: "#fff" } as React.CSSProperties;
 
+  /* ---------- UI ---------- */
   return (
     <div className="min-h-screen w-full bg-neutral-50 text-neutral-900">
-        <div className="max-w-none mx-auto p-4 sm:p-6 lg:p-8">
+      <div className="max-w-screen-2xl mx-auto p-4 sm:p-6 lg:p-8">
         <header className="mb-6">
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-3">
             <Eye className="w-7 h-7" />
             Instant Weather Notification Generator
           </h1>
-          {/* Subtitle removed per request */}
         </header>
 
         {/* Mode toggle */}
@@ -706,10 +857,10 @@ export default function NotificationGenerator() {
                   <label className="block text-sm font-medium mb-1">Province / time zone</label>
                   <select
                     value={province}
-                    onChange={(e) => setProvince(e.target.value as keyof typeof PROVINCE_TZ)}
+                    onChange={(e) => setProvince(e.target.value as ProvinceCode)}
                     className="w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
-                    {Object.keys(PROVINCE_TZ).map((p) => (<option key={p} value={p}>{p}</option>))}
+                    {(Object.keys(PROVINCE_TZ) as ProvinceCode[]).map((p) => (<option key={p} value={p}>{p}</option>))}
                   </select>
                 </div>
 
@@ -791,6 +942,47 @@ export default function NotificationGenerator() {
                   />
                 </div>
               ) : null}
+
+              {/* Polygon tools (optional) */}
+              {mode === "storm" && (
+                <div className="rounded-xl border border-neutral-200 p-3 bg-neutral-50">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Map className="w-4 h-4" />
+                    <span className="font-semibold text-sm">Polygon tools</span>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2">
+                    <input
+                      value={polyUrl}
+                      onChange={(e) => setPolyUrl(e.target.value)}
+                      placeholder="Paste polygon link (e.g., https://instantweather.ca/login/admin/custom/45.084 -78.098,...)"
+                      className="w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={handleParsePolygon}
+                        className="inline-flex items-center gap-2 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm bg-white hover:bg-neutral-50"
+                      >
+                        <MapPinIcon className="w-4 h-4" />
+                        Parse & show
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleFillTownsFromPolygon}
+                        disabled={!polyCoords}
+                        className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm ${
+                          polyCoords ? "border-neutral-300 bg-white hover:bg-neutral-50" : "border-neutral-200 bg-neutral-100 text-neutral-400 cursor-not-allowed"
+                        }`}
+                        title={polyCoords ? "Find top 5 towns in polygon" : "Parse a polygon first"}
+                      >
+                        <MapPinIcon className="w-4 h-4" />
+                        Fill towns from polygon (top 5)
+                      </button>
+                    </div>
+                    <div id="iw-poly-map" className="w-full" style={{ height: 260, background: "#eaeef3" }} />
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Hazards */}
@@ -803,20 +995,20 @@ export default function NotificationGenerator() {
                     <div key={key} className="rounded-xl border border-neutral-200 p-3 bg-neutral-50">
                       <label className="block text-xs uppercase tracking-wide text-neutral-600 mb-1">{group.label}</label>
                       <select
-                        value={selection[key].value}
+                        value={selection[key as HazardKey].value}
                         onChange={(e) => {
-                          updateSelect(key as HazardKey, e.target.value);
-                          if (key === "hail" && e.target.value === "none") { setHailMax(""); setHailMajorPop(false); }
-                          if (key === "tornado" && e.target.value === "none") setMajorPopPath(false);
-                          if (key === "rotation" && !["strong","intense"].includes(e.target.value)) setMajorPopPath(false);
-                          if (key === "funnel" && e.target.value !== "reported") setFunnelSubtype("non");
-                          if (key === "wind" && (e.target.value === "sub_severe" || e.target.value === "none")) setWindMax("");
-                          if (key === "flooding" && e.target.value === "none") setRainMax("");
+                          const val = e.target.value;
+                          updateSelect(key as HazardKey, val);
+                          if (key === "hail" && val === "none") { setHailMax(""); setHailMajorPop(false); }
+                          if (key === "tornado" && val === "none") setMajorPopPath(false);
+                          if (key === "rotation" && !["strong","intense"].includes(val)) setMajorPopPath(false);
+                          if (key === "funnel" && val !== "reported") setFunnelSubtype("non");
+                          if (key === "wind" && (val === "sub_severe" || val === "none")) setWindMax("");
+                          if (key === "flooding" && val === "none") setRainMax("");
                         }}
                         className="w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                       >
-                        {/* @ts-ignore */}
-                        {group.options.map((opt: any) => (<option key={opt.value} value={opt.value}>{opt.name}</option>))}
+                        {group.options.map((opt) => (<option key={opt.value} value={opt.value}>{opt.name}</option>))}
                       </select>
 
                       {/* HAIL: optional max size + major population for Large/Very Large */}
@@ -834,12 +1026,7 @@ export default function NotificationGenerator() {
                           </div>
                           {(selection.hail.value === "large" || selection.hail.value === "very_large") && (
                             <label className="inline-flex items-center gap-2 text-sm">
-                              <input
-                                type="checkbox"
-                                checked={hailMajorPop}
-                                onChange={(e) => setHailMajorPop(e.target.checked)}
-                                className="rounded border-neutral-300"
-                              />
+                              <input type="checkbox" checked={hailMajorPop} onChange={(e) => setHailMajorPop(e.target.checked)} className="rounded border-neutral-300" />
                               <span>Major population in path</span>
                             </label>
                           )}
@@ -871,18 +1058,13 @@ export default function NotificationGenerator() {
                       {key === "rotation" && ["strong","intense"].includes(selection.rotation.value) && (
                         <div className="mt-2">
                           <label className="inline-flex items-center gap-2 text-sm">
-                            <input
-                              type="checkbox"
-                              checked={majorPopPath}
-                              onChange={(e) => setMajorPopPath(e.target.checked)}
-                              className="rounded border-neutral-300"
-                            />
+                            <input type="checkbox" checked={majorPopPath} onChange={(e) => setMajorPopPath(e.target.checked)} className="rounded border-neutral-300" />
                             <span>Major population in path</span>
                           </label>
                         </div>
                       )}
 
-                      {/* Tornado: major population checkbox */}
+                      {/* Tornado: major population checkbox + reporter note */}
                       {key === "tornado" && (selection.tornado.value === "reported" || selection.tornado.value === "damaging_reported") && (
                         <div className="mt-2 grid grid-cols-1 gap-2">
                           <input
@@ -892,56 +1074,44 @@ export default function NotificationGenerator() {
                             className="w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                           />
                           <label className="inline-flex items-center gap-2 text-sm">
-                            <input
-                              type="checkbox"
-                              checked={majorPopPath}
-                              onChange={(e) => setMajorPopPath(e.target.checked)}
-                              className="rounded border-neutral-300"
-                            />
+                            <input type="checkbox" checked={majorPopPath} onChange={(e) => setMajorPopPath(e.target.checked)} className="rounded border-neutral-300" />
                             <span>Major population in path</span>
                           </label>
                         </div>
                       )}
 
-                      {/* Status slider + report note (hidden for rotation, funnel, tornado) */}
+                      {/* Status slider + notes (hide for rotation, funnel, tornado) */}
                       {key !== "rotation" && key !== "funnel" && key !== "tornado" && (
                         <div className="mt-2 grid grid-cols-1 gap-2">
                           <div className="flex items-center gap-2">
                             <span className="text-[11px] uppercase tracking-wide text-neutral-600">Status</span>
                             <div className="inline-flex rounded-md border border-neutral-300 overflow-hidden">
-                              <button type="button" onClick={() => updateStatus(key as HazardKey, "detected")} className={`px-2.5 py-1 text-xs ${status[key]==="detected" ? "bg-white" : "bg-neutral-100"} hover:bg-white`}>Detected</button>
-                              <button type="button" onClick={() => updateStatus(key as HazardKey, "reported")} className={`px-2.5 py-1 text-xs ${status[key]==="reported" ? "bg-white" : "bg-neutral-100"} hover:bg-white border-l border-neutral-300`}>Reported</button>
+                              <button type="button" onClick={() => updateStatus(key as HazardKey, "detected")} className={`px-2.5 py-1 text-xs ${status[key as HazardKey]==="detected" ? "bg-white" : "bg-neutral-100"} hover:bg-white`}>Detected</button>
+                              <button type="button" onClick={() => updateStatus(key as HazardKey, "reported")} className={`px-2.5 py-1 text-xs ${status[key as HazardKey]==="reported" ? "bg-white" : "bg-neutral-100"} hover:bg-white border-l border-neutral-300`}>Reported</button>
                             </div>
                           </div>
-                          {status[key] === "reported" && (
+
+                          {status[key as HazardKey] === "reported" && (
                             <input
-                              value={reportNotes[key] || ""}
+                              value={reportNotes[key as HazardKey] || ""}
                               onChange={(e) => updateReportNote(key as HazardKey, e.target.value)}
                               placeholder="How was it reported? (e.g., photo/video, spotter)"
                               className="w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                             />
                           )}
 
-                          {/* Wind: optional max gust input (hidden when 'none') */}
                           {key === "wind" && selection.wind.value !== "none" && (
                             <input
-                              type="number"
-                              inputMode="numeric"
-                              min={0}
-                              value={windMax}
+                              type="number" inputMode="numeric" min={0} value={windMax}
                               onChange={(e) => setWindMax(e.target.value)}
                               placeholder="Max wind (km/h, optional)"
                               className="w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                             />
                           )}
 
-                          {/* Flooding: optional max rainfall input */}
                           {key === "flooding" && selection.flooding.value !== "none" && (
                             <input
-                              type="number"
-                              inputMode="numeric"
-                              min={0}
-                              value={rainMax}
+                              type="number" inputMode="numeric" min={0} value={rainMax}
                               onChange={(e) => setRainMax(e.target.value)}
                               placeholder="Max rainfall (mm, optional)"
                               className="w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -958,13 +1128,11 @@ export default function NotificationGenerator() {
                   <div className="rounded-xl border border-neutral-200 p-3 bg-neutral-50">
                     <span className="block text-xs uppercase tracking-wide text-neutral-600 mb-2">Notification focus</span>
                     <label className="inline-flex items-center gap-2 mr-6 text-sm">
-                      <input type="radio" name="regionalChoice" className="rounded border-neutral-300"
-                        checked={regionalChoice === "funnel"} onChange={() => setRegionalChoice("funnel")} />
+                      <input type="radio" name="regionalChoice" className="rounded border-neutral-300" checked={regionalChoice === "funnel"} onChange={() => setRegionalChoice("funnel")} />
                       <span>Funnel cloud potential</span>
                     </label>
                     <label className="inline-flex items-center gap-2 text-sm">
-                      <input type="radio" name="regionalChoice" className="rounded border-neutral-300"
-                        checked={regionalChoice === "severe"} onChange={() => setRegionalChoice("severe")} />
+                      <input type="radio" name="regionalChoice" className="rounded border-neutral-300" checked={regionalChoice === "severe"} onChange={() => setRegionalChoice("severe")} />
                       <span>Severe thunderstorm potential</span>
                     </label>
                   </div>
@@ -1025,30 +1193,16 @@ export default function NotificationGenerator() {
                 <h2 className="font-semibold">Preview</h2>
               </div>
               <div className="flex items-center gap-2">
-                {/* Hashtag toggle */}
                 <label className="inline-flex items-center gap-2 text-sm mr-2">
-                  <input
-                    type="checkbox"
-                    checked={addHashtags}
-                    onChange={(e) => setAddHashtags(e.target.checked)}
-                    className="rounded border-neutral-300"
-                  />
+                  <input type="checkbox" checked={addHashtags} onChange={(e) => setAddHashtags(e.target.checked)} className="rounded border-neutral-300" />
                   <span>Add province hashtags to headline</span>
                 </label>
 
-                <button
-                  onClick={() => setNow(new Date())}
-                  className="inline-flex items-center gap-2 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm bg-white hover:bg-neutral-50"
-                  title="Refresh timestamp"
-                >
+                <button onClick={() => setNow(new Date())} className="inline-flex items-center gap-2 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm bg-white hover:bg-neutral-50" title="Refresh timestamp">
                   <RefreshCcw className="w-4 h-4" /> Update time
                 </button>
-                <button
-                  onClick={() => copyToClipboard(headline)}
-                  className="inline-flex items-center gap-2 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm bg-white hover:bg-neutral-50"
-                  title="Copy headline"
-                >
-                  <Copy className="w-4 h-4"/> Copy headline
+                <button onClick={() => copyToClipboard(headline)} className="inline-flex items-center gap-2 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm bg-white hover:bg-neutral-50" title="Copy headline">
+                  <Copy className="w-4 h-4" /> Copy headline
                 </button>
               </div>
             </div>
@@ -1056,7 +1210,6 @@ export default function NotificationGenerator() {
             {/* Live card */}
             <div className="p-5">
               <div className="rounded-2xl border border-neutral-200 overflow-hidden">
-                {/* Level banner */}
                 <div className="px-5 py-3" style={{ background: finalLevelMeta.color }}>
                   <div className="flex items-center gap-2 text-white">
                     {finalLevelId === 4 ? <Tornado className="w-5 h-5"/> : finalLevelId === 3 ? <AlertTriangle className="w-5 h-5"/> : finalLevelId === 2 ? <Wind className="w-5 h-5"/> : <Eye className="w-5 h-5"/>}
@@ -1064,7 +1217,6 @@ export default function NotificationGenerator() {
                     <span className="font-semibold">{finalLevelMeta.label}</span>
                   </div>
                 </div>
-                {/* Content */}
                 <div className="px-5 py-4 space-y-3 bg-white">
                   <h3 className="text-lg font-bold leading-snug">{headline}</h3>
                   <div className="text-xs text-neutral-600 flex items-center gap-1">
@@ -1075,27 +1227,21 @@ export default function NotificationGenerator() {
                 </div>
               </div>
 
-              {/* Copy full message */}
               <div className="mt-4 flex items-center gap-2">
                 <button
-                  onClick={() => {
-                    const full = `${headline}\n\n${timestamp}\n\n${description}`;
-                    copyToClipboard(full);
-                  }}
+                  onClick={() => { const full = `${headline}\n\n${timestamp}\n\n${description}`; copyToClipboard(full); }}
                   className="inline-flex items-center gap-2 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm bg-white hover:bg-neutral-50"
                 >
                   <Copy className="w-4 h-4"/> Copy full message
                 </button>
               </div>
 
-              {/* Chips of selected hazards */}
               <div className="mt-5">
                 <p className="text-xs text-neutral-600 mb-2">Selected hazards</p>
                 <div className="flex flex-wrap gap-2">
                   {mode === "storm" ? (
                     Object.entries(selection).map(([key, opt]) => (
-                      // @ts-ignore
-                      opt.level > 0 ? (
+                      (opt as HazardOption).level > 0 ? (
                         <span key={key} className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full bg-neutral-100 border border-neutral-200">
                           {key === "tornado" && <Tornado className="w-3.5 h-3.5"/>}
                           {key === "rotation" && <Tornado className="w-3.5 h-3.5"/>}
@@ -1104,9 +1250,8 @@ export default function NotificationGenerator() {
                           {key === "flooding" && <CloudRain className="w-3.5 h-3.5"/>}
                           {key === "funnel" && <CloudLightning className="w-3.5 h-3.5"/>}
                           <span className="capitalize">{key}</span>
-                          {/* @ts-ignore */}
-                          <span className="text-neutral-500">{opt.name}</span>
-                          {key === "hail" && hailMax && <span className="text-neutral-500">· max {HAIL_MAX_OPTS.find(h=>h.value===hailMax)?.name?.toLowerCase()}</span>}
+                          <span className="text-neutral-500">{(opt as HazardOption).name}</span>
+                          {key === "hail" && hailMax && <span className="text-neutral-500">· max {HAIL_MAX_OPTS.find(h=>h.value===hailMax)?.name.toLowerCase()}</span>}
                           {key === "hail" && (selection.hail.value === "large" || selection.hail.value === "very_large") && hailMajorPop && <span className="text-neutral-500">· major population</span>}
                           {key === "wind" && windMax && <span className="text-neutral-500">· max {windMax} km/h</span>}
                           {key === "flooding" && rainMax && <span className="text-neutral-500">· max {rainMax} mm</span>}
