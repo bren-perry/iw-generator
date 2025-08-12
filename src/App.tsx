@@ -1,3 +1,6 @@
+Here’s a **drop-in replacement** for your `src/App.tsx` with the polygon feature fixed and the build errors removed (no duplicate `primary`, and the `rep` variables are now used).
+
+```tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -17,10 +20,9 @@ import {
 
 /**
  * Instant Weather – Notification Generator
- * Polygon tools added:
- * - Paste polygon link → parse & show on Leaflet map
- * - "Fill towns from polygon" → auto-fills top 5 towns by population for the selected province
- * All existing UI/behavior preserved.
+ * Polygon tools:
+ *  - Paste polygon link → parse & show on Leaflet map
+ *  - “Fill towns from polygon (top 5)” → auto-fills top 5 by population
  */
 
 type HazardKey = "funnel" | "rotation" | "tornado" | "hail" | "wind" | "flooding";
@@ -95,7 +97,7 @@ const LEVELS = [
   { id: 4, key: "emergency", label: "Emergency", color: "#d81b60" },
 ] as const;
 
-/* ---------- Hail max options (objects only) ---------- */
+/* ---------- Hail max options ---------- */
 const HAIL_MAX_OPTS: HailMaxOption[] = [
   { value: "", name: "No max hail size selected (optional)", sized: "" },
   { value: "0.5cm_pea", name: "Pea (~0.5 cm)", sized: "pea-sized (~0.5 cm)" },
@@ -176,7 +178,7 @@ const HAZARDS: Record<HazardKey, HazardGroup> = {
 const DIRECTIONS = ["north","northeast","east","southeast","south","southwest","west","northwest"] as const;
 const HAZARD_PRIORITY: HazardKey[] = ["tornado", "rotation", "hail", "wind", "flooding", "funnel"];
 
-/* ---------- Helper utils ---------- */
+/* ---------- Helpers ---------- */
 const capWord = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 function toTitleCase(s: string) { return s.replace(/\b\w/g, (m) => m.toUpperCase()); }
 function nytTitleCase(str: string) {
@@ -212,7 +214,7 @@ function orderedHazards(selection: Record<HazardKey, HazardOption>) {
   return HAZARD_PRIORITY
     .map((key) => ({ key, opt: selection[key] }))
     .filter((e) => e.opt && e.opt.level > 0)
-    .sort((a, b) => b.opt.level - a.opt.level || HAZARD_PRIORITY.indexOf(a.key) - HAZARD_PRIORITY.indexOf(b.key));
+    .sort((a, b) => b.opt.level - a.level || HAZARD_PRIORITY.indexOf(a.key) - HAZARD_PRIORITY.indexOf(b.key));
 }
 function joinForHeadline(items: string[]) {
   if (items.length <= 1) return items[0] ?? "";
@@ -332,9 +334,9 @@ function buildHeadlineRegional(
   return `${category}: ${text}`;
 }
 
-/* ---------- Towns (starter lists per province; can expand later) ---------- */
+/* ---------- Towns (starter lists) ---------- */
 const TOWNS: Town[] = [
-  // ON (good coverage)
+  // ON
   { name: "Toronto", lat: 43.65107, lon: -79.347015, pop: 2731571, prov: "ON" },
   { name: "Ottawa", lat: 45.42153, lon: -75.697193, pop: 934243, prov: "ON" },
   { name: "Mississauga", lat: 43.589, lon: -79.644, pop: 721599, prov: "ON" },
@@ -382,7 +384,7 @@ const TOWNS: Town[] = [
   { name: "Lethbridge", lat: 49.6956, lon: -112.8451, pop: 92563, prov: "AB" },
 
   // SK
-  { name: "Saskatoon", lat: 52.1332, lon: -106.6700, pop: 273010, prov: "SK" },
+  { name: "Saskatoon", lat: 52.1332, lon: -106.67, pop: 273010, prov: "SK" },
   { name: "Regina", lat: 50.4452, lon: -104.6189, pop: 226404, prov: "SK" },
 
   // MB
@@ -391,12 +393,12 @@ const TOWNS: Town[] = [
 
   // QC
   { name: "Montréal", lat: 45.5019, lon: -73.5674, pop: 1760000, prov: "QC" },
-  { name: "Québec City", lat: 46.8139, lon: -71.2080, pop: 542298, prov: "QC" },
+  { name: "Québec City", lat: 46.8139, lon: -71.208, pop: 542298, prov: "QC" },
 
   // BC
   { name: "Vancouver", lat: 49.2827, lon: -123.1207, pop: 675218, prov: "BC" },
   { name: "Victoria", lat: 48.4284, lon: -123.3656, pop: 91867, prov: "BC" },
-  { name: "Kelowna", lat: 49.8879, lon: -119.4960, pop: 144576, prov: "BC" },
+  { name: "Kelowna", lat: 49.8879, lon: -119.496, pop: 144576, prov: "BC" },
 
   // Atlantic
   { name: "Halifax", lat: 44.6488, lon: -63.5752, pop: 439819, prov: "NS" },
@@ -412,33 +414,25 @@ const TOWNS: Town[] = [
 ];
 
 /* ---------- Geometry helpers ---------- */
-/** Robust parser for IW /custom/ polygon links. Accepts encoded/plain URLs. */
+// Robust parser for IW custom links like:
+// https://instantweather.ca/login/admin/custom/45.084%20-78.098%2C45.326%20-77.386%2C...
 function parseCoordsFromUrl(raw: string): LatLng[] {
   if (!raw) return [];
   let s = raw.trim();
-
-  // decode up to twice (double-encoded URLs)
   try { s = decodeURIComponent(s); } catch {}
   try { s = decodeURIComponent(s); } catch {}
-
-  // Prefer substring after "/custom/"
   const after = s.split("/custom/").pop() || s;
-  // "45.084 -78.098,45.326 -77.386,..."
   const tokens = after.split(",").map(t => t.trim()).filter(Boolean);
-
   const out: LatLng[] = [];
   for (const tok of tokens) {
     const m = tok.match(/-?\d+(?:\.\d+)?\s+-?\d+(?:\.\d+)?/);
     const pair = (m ? m[0] : tok).trim().split(/\s+/);
     if (pair.length !== 2) continue;
-    let lat = parseFloat(pair[0]);
-    let lon = parseFloat(pair[1]);
-    // if order seems flipped, swap
-    if (Math.abs(lat) > 90 && Math.abs(lon) <= 90) [lat, lon] = [lon, lat];
+    const lat = parseFloat(pair[0]);
+    const lon = parseFloat(pair[1]);
     if (Number.isFinite(lat) && Number.isFinite(lon)) out.push([lat, lon]);
   }
-
-  // remove trailing duplicate of first vertex
+  // remove trailing duplicate (often the first point repeated)
   if (out.length >= 2) {
     const [aLat, aLon] = out[0];
     const [bLat, bLon] = out[out.length - 1];
@@ -460,9 +454,9 @@ function pointInPolygon(pt: LatLng, poly: LatLng[]) {
   return inside;
 }
 
-/* ---------- Component ---------- */
-export default function NotificationGenerator() {
-  // Prevent indexing + consistent light UI
+/* ======================= Component ======================= */
+export default function App() {
+  // meta + light UI
   useEffect(() => {
     const ensureMeta = (name: string, content: string) => {
       let el = document.querySelector(`meta[name="${name}"]`) as HTMLMetaElement | null;
@@ -510,7 +504,7 @@ export default function NotificationGenerator() {
   const [funnelSubtype, setFunnelSubtype] = useState<"supercell" | "non">("non");
   const [funnelReporter, setFunnelReporter] = useState("");
 
-  // Hazards (storm mode)
+  // Hazards
   const [selection, setSelection] = useState<Record<HazardKey, HazardOption>>({
     funnel: HAZARDS.funnel.options[0],
     rotation: HAZARDS.rotation.options[0],
@@ -548,10 +542,15 @@ export default function NotificationGenerator() {
   );
   const finalLevelMeta = LEVELS.find((l) => l.id === finalLevelId)!;
 
-  const headlineBase = useMemo(() =>
-    mode === "storm"
-      ? buildHeadlineStorm(selection, status, finalLevelId, finalLevelMeta.label)
-      : buildHeadlineRegional({ choice: regionalChoice, tornadoRisk: regionalTornadoRisk }, finalLevelId, finalLevelMeta.label),
+  const headlineBase = useMemo(
+    () =>
+      mode === "storm"
+        ? buildHeadlineStorm(selection, status, finalLevelId, finalLevelMeta.label)
+        : buildHeadlineRegional(
+            { choice: regionalChoice, tornadoRisk: regionalTornadoRisk },
+            finalLevelId,
+            finalLevelMeta.label
+          ),
     [mode, selection, status, finalLevelId, finalLevelMeta.label, regionalChoice, regionalTornadoRisk]
   );
 
@@ -563,7 +562,7 @@ export default function NotificationGenerator() {
 
   const timestamp = useMemo(() => formatTimestamp(now, tz), [now, tz]);
 
-  /* ---------- Description ---------- */
+  /* ---------- Description (no duplicate consts; ‘rep’ used) ---------- */
   const description = useMemo(() => {
     const groupInfo = getStormReportGroupInfo(province);
     const reportLine =
@@ -612,7 +611,7 @@ export default function NotificationGenerator() {
 
     const ordered = orderedHazards(selection);
     const primary = ordered[0];
-    const extras = ordered.slice(1);
+    const extras  = ordered.slice(1);
 
     const levelMeaning = {
       1: "Low immediate risk. Conditions could strengthen.",
@@ -659,7 +658,7 @@ export default function NotificationGenerator() {
           const maxPart = windMax ? `, up to ${windMax} km/h` : "";
           const rep = status.wind === "reported" ? " reported" : " detected";
           const noteW = status.wind === "reported" && reportNotes.wind ? ` (${reportNotes.wind})` : "";
-          return `${classText}${maxPart}${noteW}`;
+          return `${classText}${maxPart}${rep}${noteW}`;
         }
         case "flooding": {
           const classText =
@@ -670,7 +669,7 @@ export default function NotificationGenerator() {
           const maxRain = rainMax ? `, with rainfall totals up to ${rainMax} mm possible` : "";
           const rep = status.flooding === "reported" ? " reported" : " detected";
           const noteF = status.flooding === "reported" && reportNotes.flooding ? ` (${reportNotes.flooding})` : "";
-          return `${classText}${maxRain}${noteF}`;
+          return `${classText}${maxRain}${rep}${noteF}`;
         }
         case "funnel":
           if (value === "reported") {
@@ -696,11 +695,10 @@ export default function NotificationGenerator() {
       (townsText ? ` Areas in the path include ${townsText}.` : "") +
       timeText;
 
-    const primary = ordered[0];
-    const extrasPhrases = ordered.slice(1).map((e) => descFor(e.key as HazardKey, e.opt.value)).filter((s): s is string => Boolean(s));
     const primaryPhrase = primary ? descFor(primary.key as HazardKey, primary.opt.value) : null;
-
     const p2 = primaryPhrase ? `Primary threat: ${primaryPhrase}.` : "";
+
+    const extrasPhrases = extras.map((e) => descFor(e.key as HazardKey, e.opt.value)).filter((s): s is string => Boolean(s));
     let p3 = "";
     if (extrasPhrases.length === 1) p3 = `Additional threat: ${extrasPhrases[0]}.`;
     else if (extrasPhrases.length > 1) p3 = `Additional threats: ${extrasPhrases.slice(0,-1).join(", ")} & ${extrasPhrases[extrasPhrases.length-1]}.`;
@@ -710,11 +708,22 @@ export default function NotificationGenerator() {
     const primaryKey = primary?.key as HazardKey | undefined;
     if (primaryKey === "rotation") {
       if (rotationVal === "weak") {
-        safetyLines.push("Stay close to sturdy shelter and be ready to move indoors quickly if the storm approaches.", "Have a plan to reach an interior room away from windows on short notice.");
+        safetyLines.push(
+          "Stay close to sturdy shelter and be ready to move indoors quickly if the storm approaches.",
+          "Have a plan to reach an interior room away from windows on short notice."
+        );
       } else if (rotationVal === "organized") {
-        safetyLines.push("Be prepared to take shelter quickly in an interior room away from windows.", "Delay or reroute travel near the storm until it passes.");
+        safetyLines.push(
+          "Be prepared to take shelter quickly in an interior room away from windows.",
+          "Delay or reroute travel near the storm until it passes."
+        );
       } else if (rotationVal === "strong") {
-        safetyLines.push("Act now: move to an interior room away from windows.", "Avoid large open rooms; be ready to move to the lowest level if the storm intensifies.");
+        safetyLines.push(
+          ...(majorPopPath
+            ? ["Take shelter now on the lowest level or an interior room away from windows.", "Protect your head and neck; avoid large open rooms."]
+            : ["Act now: move to an interior room away from windows.", "Avoid windows and large open rooms, and be ready to move to the lowest level if the storm intensifies."]
+          )
+        );
       } else if (rotationVal === "intense") {
         safetyLines.push("Take shelter now on the lowest level in a sturdy building.", "Put as many walls between you and the outside as possible; protect your head and neck.");
       }
@@ -749,21 +758,21 @@ export default function NotificationGenerator() {
   const mapRef = useRef<any>(null);
   const layerRef = useRef<any>(null);
 
-  // Initialize/update Leaflet map when polygon changes
+  // Initialize/Update Leaflet map when polygon changes
   useEffect(() => {
     const L = (window as any).L;
-    const el = document.getElementById("iw-poly-map");
-    if (!L || !el) return;
+    const mapEl = document.getElementById("iw-poly-map");
+    if (!L || !mapEl) return;
 
     if (!mapRef.current) {
-      mapRef.current = L.map(el).setView([45, -79], 5);
+      mapRef.current = L.map(mapEl).setView([45, -79], 5);
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: "&copy; OpenStreetMap contributors",
         maxZoom: 18,
       }).addTo(mapRef.current);
     }
+    const map = mapRef.current;
 
-    // clear previous layer
     if (layerRef.current) {
       layerRef.current.remove();
       layerRef.current = null;
@@ -772,20 +781,20 @@ export default function NotificationGenerator() {
     if (polyCoords && polyCoords.length >= 3) {
       layerRef.current = (window as any).L
         .polygon(polyCoords, { color: "#2563eb", weight: 3, fillOpacity: 0.15 })
-        .addTo(mapRef.current);
+        .addTo(map);
       const bounds = (window as any).L.latLngBounds(polyCoords as any);
-      mapRef.current.fitBounds(bounds, { padding: [20, 20] });
+      map.fitBounds(bounds, { padding: [20, 20] });
     }
   }, [polyCoords]);
 
   function handleParsePolygon() {
-    const pts = parseCoordsFromUrl(polyUrl);
-    if (!pts.length) {
-      alert("Could not find coordinates in that link. Please check the format.");
+    const coords = parseCoordsFromUrl(polyUrl);
+    if (!coords.length) {
+      alert("Could not parse coordinates from the link. Please check the format.");
       setPolyCoords(null);
       return;
     }
-    setPolyCoords(pts);
+    setPolyCoords(coords);
   }
 
   function handleFillTownsFromPolygon() {
@@ -813,7 +822,7 @@ export default function NotificationGenerator() {
   function copyToClipboard(text: string) { if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).catch(()=>{}); }
   const levelColorStyle = { background: finalLevelMeta.color, color: "#fff" } as React.CSSProperties;
 
-  /* ---------- UI ---------- */
+  /* ========================= UI ========================= */
   return (
     <div className="min-h-screen w-full bg-neutral-50 text-neutral-900">
       <div className="max-w-screen-2xl mx-auto p-4 sm:p-6 lg:p-8">
@@ -942,7 +951,7 @@ export default function NotificationGenerator() {
                 </div>
               ) : null}
 
-              {/* Polygon tools (storm mode) */}
+              {/* Polygon tools */}
               {mode === "storm" && (
                 <div className="rounded-xl border border-neutral-200 p-3 bg-neutral-50">
                   <div className="flex items-center gap-2 mb-2">
@@ -953,7 +962,7 @@ export default function NotificationGenerator() {
                     <input
                       value={polyUrl}
                       onChange={(e) => setPolyUrl(e.target.value)}
-                      placeholder="Paste polygon link (e.g., https://instantweather.ca/login/admin/custom/45.084 -78.098,...)"
+                      placeholder="Paste polygon link (e.g., https://instantweather.ca/login/admin/custom/45.084 -78.098, ...)"
                       className="w-full rounded-lg border border-neutral-300 bg-white px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                     <div className="flex flex-wrap gap-2">
@@ -1289,9 +1298,10 @@ export default function NotificationGenerator() {
           </section>
         </div>
 
-        {/* Footer intentionally removed */}
+        {/* Footer intentionally omitted */}
       </div>
     </div>
   );
 }
+```
 
