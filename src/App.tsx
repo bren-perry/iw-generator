@@ -11,8 +11,7 @@ import {
   MapPin,
   Clock,
   Compass,
-  Map,
-  MapPin as MapPinIcon,
+  Map as MapIcon, MapPin as MapPinIcon
 } from "lucide-react";
 
 /**
@@ -959,7 +958,7 @@ export default function App() {
               {mode === "storm" && (
                 <div className="rounded-xl border border-neutral-200 p-3 bg-neutral-50">
                   <div className="flex items-center gap-2 mb-2">
-                    <Map className="w-4 h-4" />
+                    <MapIcon className="w-4 h-4" />
                     <span className="font-semibold text-sm">Polygon tools</span>
                   </div>
                   <div className="grid grid-cols-1 gap-2">
