@@ -831,7 +831,7 @@ export default function App() {
       return;
     }
   
-    const top5 = unique.sort((a, b) => b.pop - a.pop).slice(0, 5);
+    const top5 = unique.sort((a, b) => b.pop - a.pop).slice(0, 10);
     setTowns(top5.map((t) => t.name).join(", "));
   }
 
