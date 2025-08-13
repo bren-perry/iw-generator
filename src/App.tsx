@@ -966,7 +966,7 @@ export default function App() {
                         title={polyCoords ? "Find top 5 towns in polygon" : "Parse a polygon first"}
                       >
                         <MapPinIcon className="w-4 h-4" />
-                        Fill towns from polygon (top 5)
+                        Fill Towns
                       </button>
                     </div>
                     <div id="iw-poly-map" className="w-full" style={{ height: 260, background: "#eaeef3" }} />
