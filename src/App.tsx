@@ -424,9 +424,12 @@ export default function App() {
         html, body, #root { min-height: 100%; background: #f6f7f9; }
         body { margin: 0; }
         .leaflet-container { border-radius: 12px; }
-
+      
         /* ===== Scoped UI reset (back to original look) ===== */
         .iw-root { --iw-border:#e5e7eb; --iw-border-strong:#d1d5db; --iw-text:#111827; --iw-ring:rgba(37,99,235,.35); }
+      
+        /* ⬇️ added input:not([type]) */
+        .iw-root input:not([type]),
         .iw-root input[type="text"],
         .iw-root input[type="number"],
         .iw-root input[type="search"],
@@ -440,17 +443,26 @@ export default function App() {
           padding: 0.5rem 0.75rem;
           line-height: 1.5;
         }
+      
         .iw-root input::placeholder,
         .iw-root textarea::placeholder { color:#9ca3af; }
-        .iw-root input:focus,
+      
+        /* ⬇️ added input:not([type]):focus */
+        .iw-root input:not([type]):focus,
+        .iw-root input[type="text"]:focus,
+        .iw-root input[type="number"]:focus,
+        .iw-root input[type="search"]:focus,
+        .iw-root input[type="email"]:focus,
         .iw-root textarea:focus,
         .iw-root select:focus {
           outline: none;
           border-color:#60a5fa !important;
           box-shadow: 0 0 0 2px var(--iw-ring);
         }
+      
         .iw-root button { background:#fff; border-color: var(--iw-border-strong); }
       `;
+
       document.head.appendChild(style);
     }
   }, []);
